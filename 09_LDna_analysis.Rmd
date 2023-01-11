@@ -23,7 +23,7 @@ library('adegenet')
 ```
 
 # Load data
-# Loading LD
+# Loading LD table modified from NeEstimator output
 ```{r}
 dat <- read.table("data/POPGEN/All_burrow_1pop.txt", head=T, row.names=1)
 dat <- as.matrix(dat)
