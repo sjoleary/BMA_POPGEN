@@ -1,0 +1,4066 @@
+---
+title: "Connectivity and population structure gafftopsail catfish"
+subtitle: "Supplementary Data: Methods & Results"
+author: "SJ O'Leary"
+date: "`r Sys.Date()`"
+output: 
+  tint::tintHtml:
+    number_sections: true
+    toc: true
+    toc_depth: 2
+bibliography: GAFF.bib
+link-citations: yes
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+
+# load libraries and functions ----
+
+library(tufte)
+library(tint)
+library(knitr)
+
+# libraries for mapping
+library(rgdal)
+library(sdmpredictors)
+library(geoR)
+library(raster)
+library(sf)
+
+# libraries for data wrangling
+library(tidyr)
+library(tibble)
+library(broom)
+library(reshape2)
+library(plyr)
+library(dplyr)
+library(glue)
+library(tidyverse)
+
+# libraries for data visualization
+library(ggrepel)
+library(UpSetR)
+library(ggplot2)
+library(ggthemes)
+
+# stats
+library(coda)
+library(coin)
+
+# libraries for pop gen analysis
+library(vcfR)
+library(assigner)
+library(radiator)
+library(adegenet)
+library(hierfstat)
+library(pegas)
+library(poppr)
+library(vegan)
+
+# custom functions
+source("scr/xtrafunctions.R")
+source("scr/PCA.R")
+source("scr/vegan.R")
+source("scr/DAPC.R")
+source("scr/ggplot.R")
+source("scr/genind.R")
+
+# OTHER OPTIONS ====
+
+# set how numbers are printed
+options(scipen=999)
+
+# invalidate cache when the package version changes
+knitr::opts_chunk$set(
+	message = FALSE,
+	warning = FALSE,
+	cache.extra = packageVersion("tint"),
+	tidy = FALSE,
+	echo = FALSE,
+	dev = c('png', 'svg')
+)
+options(htmltools.dir.version = FALSE)
+
+# SET LEVELS AND COLORS FOR GROUPS ====
+
+
+# format estuaries
+est_levels <- c("CorpusChristi", 
+                "Mississippi-AtchafalayaPlume",
+                "Atchafalaya-VermillionBays",
+                "Terrebonne-TimbalierBays",
+                "Breton-ChandeleurSound",
+                "WestMississippiSound",
+                "LakeBorgne",
+                "MobileBay",
+                "ApalacheeBay",
+                "SuwanneeRiver",
+                "TampaBay",
+                "SarasotaBay",
+                "IndianRiver")
+
+est_col <- c("#375623",   
+             "#70ad47",   
+             "#51ed21",   
+             "#00c4bb", 
+             "#347C98",   
+             "#87c3fa",   
+             "#0247FE",   
+             "#7008a0",   
+             "#f200ff",   
+             "#FE2712",   
+             "darkorange", 
+             "gold",
+             "grey75")
+
+pops <- c("FLA", 
+          "FLGS", "FLGN", 
+          "MB", "MISS", "CS", "LA", 
+          "CC", 
+          "CAMP")
+
+col_pops <- c("chartreuse4", 
+              "dodgerblue4", "steelblue1", 
+              "#8c0b0b", "red", "darkorange", "gold",
+              "#ff038b",
+              "purple3")
+
+reg <- c("SWATL", "EGULF", "CGULF", "WGULF", "SGULF")
+
+col_regs <- c("chartreuse4", "dodgerblue4", "#8c0b0b", "#ff038b", "purple3") 
+
+oce <- c("ATL", "GULF")
+
+col_oce <- c("#0057E7", "#FFA700")
+
+
+# LOAD & FORMAT DATA SET ====
+
+# import genotypes as genind ----
+
+gen <- read.genepop(file = "data/POPGEN/BMA_by_pop_genepop.gen",
+                    ncode = 3L, quiet = FALSE)
+
+Inds <- as.data.frame(indNames(gen)) %>%
+  rename(LIB_ID = `indNames(gen)`) %>%
+  separate(LIB_ID, into = c("SP", "PLATE", "WELL", "SAMPLE_ID"), sep = "-", remove = FALSE, extra = "merge") %>%
+  select(-SP)
+
+# Import sample meta-data
+SampleInfo <- read_delim("data/POPGEN/SampleInfo.txt", delim = "\t")
+
+strata <- left_join(Inds, SampleInfo) %>%
+  distinct() %>%
+  mutate(POP = ordered(POP, levels = pops)) %>%
+  mutate(ESTUARY = ordered(ESTUARY, levels = est_levels),
+         REGION = case_when(POP %in% c("FLA") ~ "SWATL",
+                            POP %in% c("CAMP") ~ "SGULF",
+                            POP %in% c("FLGS", "FLGN") ~ "EGULF",
+                            POP %in% c("MB", "MISS", "CS", "LA") ~ "CGULF",
+                            POP %in% c("CC") ~ "WGULF",),
+         REGION = ordered(REGION, levels = reg),
+         OCEAN = ifelse(POP == "FLA", "ATL", "GULF"))
+
+strata(gen) <- strata
+
+# define populations using defined stratification
+setPop(gen) <- ~POP
+
+```
+
+Data set used for analysis:
+
+```{r}
+
+gen
+
+```
+
+# Sample locations/Regions
+
+Samples were collected in or near estuaries throughout the Gulf of Mexico and southwest Atlantic, individual geographic coordinates were not available for all samples. Individuals are grouped by putative populations based on sample location. Estuaries are grouped by geographic regions (Northern, Central, Western, Southern Gulf, and Southwest Atlantic). Geographic regions are categorized as being located in the Gulf and Atlantic ocean basins, though it should be noted that the Atlantic consists of a single sample.
+
+```{r fig.cap="Sample distribution of gafftopsail catfish throughout the Gulf of Mexico and Atlantic Ocean", fig.height=7, fig.width=9}
+
+# create basemap
+map <- readOGR(dsn = "data/BASEMAPS", layer = "ne_10m_land")
+
+map <- tidy(map) %>%
+  filter(long >= -98 & long <= -77 & lat >= 19 & lat <= 31) %>%
+  droplevels()
+
+# state line basemap
+states <- readOGR(dsn = "data/BASEMAPS", layer = "ne_10m_admin_1_states_provinces_lines")
+
+states <- tidy(states) %>%
+  filter(long >= -98 & long <= -77 & lat >= 19 & lat <= 31) %>%
+  droplevels()
+
+# plot samples (by pop)
+ggplot(strata, aes(x = LONG, y = LAT, color = POP)) +
+  geom_point(size = 3) +
+  geom_path(data = map, 
+            aes(x = long, y = lat, group = group), 
+            color = "black", size = 0.5) +
+  geom_path(data = states, 
+            aes(x = long, y = lat, group = group), 
+            color = "black", size = 0.2, linetype = "dashed") +
+  scale_color_manual(values = col_pops) +
+  xlim(-98, -77) +
+  ylim(19, 31) +
+  labs(x = " ", y = " ") +
+  theme_standard
+
+```
+
+Sample distribution by putative population, geographic region, and ocean basin.
+
+```{r}
+
+
+kable(
+  count(strata, POP),
+  caption = "Number of sample per putative population, Florida Atlantic (FLA), South and North Florida (FLGS, FLGN), Alabama (MB), Mississippi (MISS), Louisiana (CS, LA), Texas (CC), and Campeche (SG)."
+)
+
+
+kable(
+count(strata, REGION),
+caption = "Number of samples per geographic region, Southwest Atlantic (Florida), Eastern Gulf (North, South Florida), Central Gulf (Alabama, Mississippi, Louisiana), Western Gulf (Texas), Southern Gulf (Campeche).")
+
+
+kable(
+count(strata, OCEAN),
+caption = "Number of samples per ocean basin.")
+
+
+```
+
+
+# Compare overall patterns of variance within data set
+
+## Test for heterogeneity using AMOVA
+
+Homogeneity in allele and genotype distributions among samples tested using a single-level, locus-by-locus analysis of molecular variance (AMOVA) as implemented in `Arlequin`.
+
+## PCA
+
+Perform PCA; missing values in allele count matrix replaced with mean values (across all individuals).
+
+```{r fig.cap="Percent variance explained by first 25 principle components", fig.height=3, fig.width=4}
+
+# create matrix with centered/scaled allele frequencies 
+# will also replace missing data
+X <- scaleGen(gen, NA.method = "mean")
+
+# perform PCA/retain top 3 PCs
+PCA <- dudi.pca(X, center = FALSE, scale = FALSE,
+                scannf = FALSE, nf = 10)
+
+# extract Eigenvalues of each PC & calculate % variance explained by each PC
+eig <- eigenvalues(PCA)
+
+# plot %variance explained by of top 25 PCs
+plot.eigen.variance(eig)
+
+```
+
+Top three principle components retained, which explain a cumulative `r round(sum(eig$Percent[1:3])*100, digits = 2)`% variance.
+
+```{r fig.cap="Distribution of individuals on first three principle components", fig.height=5, fig.width=10}
+
+# Individuals' contribution to PCs/calculate Loading per individual and PC
+PC_ind <- PC.ind(PCA)
+
+# join individuals' contribution to PC with strata
+PC_ind <- left_join(PC_ind, strata)
+
+p1 <- ggplot(PC_ind, aes(x = Axis1, y = Axis2, fill = POP)) +
+  geom_point(shape = 21, size = 3) +
+  scale_fill_manual(values = col_pops) +
+  labs(x = paste("PC1:", round(eig[1, 3], digits = 4), "%"), y = paste("PC2:", round(eig[2, 3], digits = 4), "%")) +
+  theme_standard +
+  theme(legend.position = "bottom")
+
+p2 <- ggplot(PC_ind, aes(x = Axis2, y = Axis3, fill = POP)) +
+  geom_point(shape = 21, size = 3) +
+  scale_fill_manual(values = col_pops) +
+  labs(x = paste("PC2:", round(eig[2, 3], digits = 4), "%"), y = paste("PC3:", round(eig[3, 3], digits = 4), "%")) +
+  theme_standard +
+  theme(legend.position = "bottom")
+
+multiplot(p1, p2, cols = 2)
+
+```
+
+
+# Population differentiation-based (FST) outlier detections
+
+## Model-based estimation of null distribution: Bayesian maximum likelihood (multinomial-Dirichlet model)
+
+**Run BayeScan for individuals grouped by sample location (putative populations)**
+
+`BayeScan` [@Foll2008; @Foll2010] uses differences in allele frequencies between populations to identify Fst-outlier loci. The null model (distribution of Fst for neutral loci) is generated based on the multinomial-Dirichlet model (island model) which assumes allele frequencies of subpopulations are correlated through a common migrant gene pool from which they differ to varying degrees; this difference is measured by a subpopulation-specific Fst coefficient. This model can incorporate ecologically more realistic scenarios compared to a strict island model and is a robust method even when there are differing effective sizes and migration rates per subpopulation.
+
+Selection is introduced by decomposing population-specific Fst coefficients into population-specific component (beta), shared by all loci, and locus-specific component (alpha), shared by all poulations using logistic regresstion. If locus-specific component is necessary to explain observed pattern of diversity (i.e. alpha significantly different from 0), departure from neutrality is inferred.
+
+`BayeScan` calculates a posterior probability for model including selection using bayes factors. Multiple testing is needed to incorporate identifying loci as under selection by chance. The posterior odds (instead of bayes factors) are calculated to make the decision on whether loci should be considered outlier. Posterior odds are calculated as the ratio of posterior probabilities indicating how much more likely the model with selection is compared to netural model. Posterior probabilities can be used to directly control FDR (expected proportion of false positives amont outlier loci). q-value of each locus indicates the minimum FDR at which this locus may become significant, e.g. q-value > 0.05 means that 5% of corresponding outlier markers are expected to be false positives (5% threshold more stringent than corresponding p-value in classic statistics). 
+
+Use PGDSpider to convert genepop file to bayescan format.
+
+```{bash eval=FALSE, echo=TRUE}
+
+# input file with individuals grouped by sample location
+java -jar /usr/local/bin/PGDSpider2-cli.jar -inputfile data/POPGEN/BMA_by_pop_genepop.gen -inputformat GENEPOP -outputfile data/POPGEN/BMA.genotypes_bayescan.txt -outputformat GESTE_BAYE_SCAN -spid scr/genepop2bayscan.spid
+
+```
+
+Get list of loci in data set to be able to identify outlier loci by name.
+
+```{r}
+
+loci <- as.data.frame(t(read_delim("data/POPGEN/BMA_by_pop_genepop.gen", 
+                   delim = ",", col_names = FALSE, skip = 1, n_max = 1)))
+
+colnames(loci) <- "LOCUS"
+
+```
+
+Prior odds for neutral model are determined using `-pr_odds` and indicate how much more likely the neutral model (does not include locus-specific effect alpha) is compared to the model of select (includes locus-specific effect alpha). Prior odds = 10 indicates that the neutral model is 10x more likely. The test of selection becomes more conservative/less false positive outlier are detected with increasing prior odds. For large amount of data (loci) including many populations and individuals per population, the prior odds should have little influence on on results but for realistic data sets (< 20 populations), the choice of prior odds can have strong effect and should be adjusted based on the number of loci included in the data set. For < 1,000 loci, prior odds = 10 is reasonable for larger data sets (1,000 = 10,000), prior odds = 100 is more appropriate, for millions of markers prior odds = 10,000 may be necessary.
+
+Short, successive pilot runs (`-nbp`) are used to to adjust acceptance rates between 0.25 - 0.45 (`-pilot` determines iterations) and choose proposal distribution for reversible jump by estimating mean and variance for all alpha's under the saturated model (contains all alpha parematers), which is close to full conditional distribution and generally creates conservative enough parameters to ensure convergence.
+
+Sample size (`-n`) corresponds to number of iterations the program will write out/use for estimation of parameters after initial burn-in (`-burn`).
+
+Thinning interval (`-thin`) is number of intervals between two samples; reduces autocorrelation from data generated using Markov chain
+
+Total number of interations is (sample size x thinning interval) + burn-in.
+
+```{bash eval=FALSE, echo=TRUE}
+
+# run for individuals grouped by sample location
+BayeScan2.1_linux64bits data/POPGEN/BMA.genotypes_bayescan.txt -od results/ -o BMA_pop.bayescanPO10kburn100kn10kthin50 -all_trace -threads 45 -n 10000 -thin 50 -nbp 25 -pilot 5000 -burn 50000 -pr_odds 10000 -out_pilot -out_freq
+
+```
+
+**Parameters used:**
+
+```{r}
+
+read_lines("results/BMA_pop.bayescanPO10kburn100kn10kthin50_Verif.txt", skip = 3, n_max = 11)
+
+```
+
+
+**Plot posterior distributions:**
+
+Full output of MCMC algorithm is in `*.sel` file. Each line corresponds to iteration of MCMC algorithm, columns contain iteration index (start after pilot runs/burn-in), logarithm of likelihood, Fst coefficient for every population, alpha coefficients for every locus. 
+
+Counting the null values of alpha gives the posterior probability for the neutral model (only written out if `-all_trace` flag enabled).
+
+```{r fig.cap="Trace of likelihood and values of Fst over iterations.", fig.height=9, fig.width=12}
+
+# number of groups
+p <- 9
+
+# vector of Fst values calc
+p <- c(1:p)
+p <- paste("fst", p, sep = "")
+
+
+# number of loci
+l <- nrow(loci)
+
+# vector of Fst values calc
+l <- c(1:l)
+l <- paste("alpha", l, sep = "")
+
+
+# column names
+c <- c("iteration", "logL", p, l)
+
+# read chain data
+sel <- read_table2("results/BMA_pop.bayescanPO10kburn100kn10kthin50.sel", skip = 1,
+                     col_names = c, col_types = cols(.default = "n"))
+
+mean <- mean(sel$logL)
+std <- sd(sel$logL)
+
+# plot likelihood logL
+p1 <- ggplot(sel, aes(x = iteration, y = logL)) +
+  geom_line(color = "darkblue") +
+  geom_hline(yintercept = (mean+std), color = "darkred", linetype = "dotted", size = 1) +
+  geom_hline(yintercept = mean, color = "darkred", linetype = "dashed", size = 1) +
+  geom_hline(yintercept = (mean-std), color = "darkred", linetype = "dotted", size = 1) +
+  labs(x = "iteration", y = "log Likelihood") +
+  theme_standard
+
+# plot population specific Fst coefficients
+p2 <- ggplot() +
+  geom_line(data = sel, aes(x = iteration, y = fst1), color = "blue", size = 0.5) +
+  geom_line(data = sel, aes(x = iteration, y = fst2), color = "darkgreen", size = 0.5) +
+  geom_line(data = sel, aes(x = iteration, y = fst3), color = "orange", size = 0.5) +
+  geom_line(data = sel, aes(x = iteration, y = fst4), color = "purple", size = 0.5) +
+  geom_line(data = sel, aes(x = iteration, y = fst5), color = "red", size = 0.5) +
+  geom_line(data = sel, aes(x = iteration, y = fst6), color = "green", size = 0.5) +
+  geom_line(data = sel, aes(x = iteration, y = fst7), color = "gold", size = 0.5) +
+  geom_line(data = sel, aes(x = iteration, y = fst8), color = "darkblue", size = 0.5) +
+  geom_line(data = sel, aes(x = iteration, y = fst9), color = "grey", size = 0.5) +
+  scale_y_continuous(limits = c(0, 0.005)) +
+  labs(x = "iteration", y = "mean fst per pop") +
+  theme_standard
+
+multiplot(p1, p2, cols = 1)
+
+```
+
+Verify that sample size used to estimate posteriors is sufficiently large. Effective sample size to estimate parameters can be smaller than value used for BayeScan run (10,000). MCMC explores the parameter space by moving in small steps. Therefore, two consecutive values will be strongly correlated; used thinning interval of 50 to reduce autocorrelation. 
+
+Check correlation between sampled parameter values for thinned chains used to estimate posterior probability. Effective sample size will be smaller than sample size used as input (10,000) if there is some correlation.
+
+```{r fig.cap="Comparison of effective sample sizes for fst, alpha, and likelihood", fig.height=6, fig.width=4}
+
+# create an MCMC object with the correct thinning interval
+chain <- mcmc(sel, thin = 50)
+
+str(chain)
+
+eff <- as.data.frame(effectiveSize(chain)) %>%
+  rename(effSize = `effectiveSize(chain)`) %>%
+  rownames_to_column("parameter") %>%
+  mutate(paramtype = ifelse(grepl("fst", parameter), "fst",
+                     ifelse(grepl("alpha", parameter), "alpha",
+                     ifelse(grepl("logL", parameter), "likelihood", "other")))) %>%
+  filter(paramtype != "other")
+
+ggplot(eff, aes(x = effSize)) +
+  geom_histogram(binwidth = 5000, color = "black", fill = "darkorange") +
+  geom_vline(xintercept = 10000, color = "darkred", linetype = "dashed") +
+  facet_grid(paramtype ~ . , scales = "free") +
+  theme_standard
+
+```
+
+Effective size of likelihood sample should be smaller than input value of 10,000, while Fst parameters less affected by correlation because correlation decreases more rapidly for Fst values than for likelihood.
+
+
+**Test for convergence**
+
+Test for non-convergence of chains using Geweke's convergence diagnostic which compares the means of the first and last parts of the MC and reports the z-scores for each parameter.
+
+For α = 0.05, critical values of z are – 1.96 and +1.96, i.e. if z values fall within those boundaries indicative of equality of means and therefore convergence of MCMC. On the otherhand z < -1.96 or z > 1.96 null hypothesis of equality of means should be rejected.
+
+```{r fig.cap="Comparison of z values for fst, alpha, and log likelihood.", fig.height=6, fig.width=4}
+
+geweke <- geweke.diag(chain, frac1 = 0.1, frac2 = 0.5)
+
+z <- as.data.frame(geweke$z) %>%
+  rename(z = `geweke$z`) %>%
+  rownames_to_column("parameter") %>%
+  mutate(paramtype = ifelse(grepl("fst", parameter), "fst",
+                     ifelse(grepl("alpha", parameter), "alpha",
+                     ifelse(grepl("logL", parameter), "likelihood", "other")))) %>%
+  filter(paramtype != "other")
+
+ggplot(z, aes(x = z)) +
+  geom_histogram(color = "black", fill = "darkorange") +
+  geom_vline(xintercept = -2, color = "darkred", linetype = "dashed") +
+  geom_vline(xintercept = 2, color = "darkred", linetype = "dashed") +
+  facet_grid(paramtype ~ . , scales = "free") +
+  theme_standard
+
+```
+
+**Compare Fst, alpha, and q-values**
+
+File `*_fst.txt` contains one locus per row (first column). Columns 2 - 4 correspond to posterior probability for model including selection (`prob`), log10 of posterior odds for model including slection (`log10PO`), q-value for model including selection (`qval`); these are related to the test of local adaptation, i.e. model including locus-specific effect alpha. Fifth column is estimated locus-specific effect alpha (`alpha`) which indicates the strength and direction (positive values indicate diversifying selection). Final column is the locus-specific Fst coefficient averaged over populations (`fst`).
+
+Use q-value to determine identify loci putatively under the influence of selection.
+
+```{r fig.cap="Distribution of q-values.", fig.height=4, fig.width=5}
+
+fst <- read_table2("results/BMA_pop.bayescanPO10kburn100kn10kthin50_fst.txt", 
+                   skip = 1, col_names = c("temp", "prob", "log10PO", "qval", "alpha", "fst")) %>%
+  select(-temp) %>%
+  mutate(log10q = log10(qval))
+
+fst <- bind_cols(loci, fst)
+
+ggplot(fst, aes(x = qval)) +
+  geom_histogram(binwidth = 0.025, color = "black", fill = "darkorange") +
+  geom_vline(xintercept = (0.05), color = "darkred", linetype = "dashed") +
+  scale_y_sqrt() +
+  labs(x = "q-value", y = "sqrt no. of loci") +
+  theme_standard
+
+kable(
+  fst %>%
+    count(qval <= 0.05),
+  caption = "Number of loci with q-value < 0.05"
+)
+
+
+
+kable(
+  fst %>%
+    count(qval <= 0.01),
+  caption = "Number of loci with q-value < 0.01"
+)
+
+
+
+kable(
+  fst %>%
+    count(qval <= 0.001),
+  caption = "Number of loci with q-value < 0.001"
+)
+
+```
+
+
+**Distribution of estimated Fst and locus-specific alpha component**
+
+* Alpha = 0: no selection
+* Alpha > 0: positive selection
+* Alpha < 0: balancing selection
+
+```{r fig.cap="Distribution of estimated Fst and locus-specific alpha component.", fig.height=4, fig.width=10}
+
+p1 <- ggplot(fst, aes(x = alpha)) +
+  geom_histogram(color = "black", fill = "darkorange") +
+  geom_vline(xintercept = 0, color = "darkred", linetype = "dashed") +
+  scale_y_sqrt() +
+  labs(x = "alpha", y = "sqrt no. of loci") +
+  theme_standard
+
+p2 <- ggplot(fst, aes(x = fst)) +
+  geom_histogram(binwidth = 0.01, color = "black", fill = "darkorange") +
+  scale_y_sqrt() +
+  labs(x = "fst", y = "sqrt no. of loci") +
+  theme_standard
+
+p3 <- ggplot(fst, aes(x = alpha, y = fst)) +
+  geom_point(shape = 1, size = 2) +
+  geom_smooth(color = "darkblue", linetype = "dashed") +
+  geom_vline(xintercept = 0, color = "darkred", linetype = "dashed") +
+  labs(x = "locus-specific effect alpha", y = "mean fst per locus") +
+  theme_standard
+
+multiplot(p1, p2, p3, cols = 3)
+
+```
+
+
+**Identify outlier loci**
+
+Identify loci with q-value < 0.05.
+
+```{r fig.cap="Relationship log10(qvalue) and Fst per locus", fig.height=4, fig.width=5}
+
+ggplot(fst, aes(x = log10q, y = fst)) +
+  geom_point(shape = 1, size = 2, color = "black") +
+  geom_vline(xintercept = log10(0.05), color = "darkred", linetype = "dashed") +
+  geom_vline(xintercept = log10(0.01), color = "darkred", linetype = "dashed") +
+  geom_vline(xintercept = log10(0.001), color = "darkred", linetype = "dashed") +
+  geom_hline(aes(yintercept = mean(fst, na.rm = TRUE)), 
+             color = "darkblue", linetype = "dashed", size = 0.5) +
+  geom_hline(aes(yintercept = quantile(fst, 0.05, na.rm = TRUE)), 
+             color = "darkblue", linetype = "dashed", size = 0.5) +
+  scale_x_reverse() +
+  labs(x = "log10(qvalue)", "fst per locus") +
+  theme_standard
+
+outlier_bayescan <- fst %>%
+  filter(qval <= 0.05) %>%
+  select(LOCUS)
+
+write_delim(outlier_bayescan, "results/bayescan.pop.outlier", delim = "\t")
+
+```
+
+A total of `r nrow(outlier_bayescan)` Fst-outlier loci were identified using `bayescan` (p < 0.05).
+
+
+## Model-based estimation of null distribution: Coalescent simulations (island model)
+
+The FDIST method [@Beaumont1996; @Excoffier2010] is implemented in Arlequin using a strict island model. Coalescent simulations basd on the distribution of heterozygosity in the empirical data set are used to create null distributions for Fst for a given number of demes.
+
+**Run FDIST method implmented in Arlequin**
+
+Use `PGDSpider` to convert genepop to arlequin (`*.arp`) files. Need to define `Structure` of demes in order for Arlequin to run. Assume all in one group. Use Arlequin to create settings files; make sure linux line endings and `*.ars` settings files are set as executable.
+
+Run all models for 20,000 simulations. For island model simulate 3, 4, 9, 25, 50, and 100 demes. Execute bash script to run different combinations of input files and settings files and move/rename output files into `results` directory.
+
+```{bash eval=FALSE, echo=TRUE}
+
+./scr/runFDIST_Arlequin.sh
+
+```
+
+
+**Evaluate simulated and observed Fst-He distributions**
+
+```{r fig.cap="Fst-heterozygosity distribution for simulated and observed data set using nine demes (number of putative populations assumed in data set). Color of individual points depict levels significance (darker colors indicate smaller values).", fig.height=10, fig.width=8}
+
+filenames <- list.files(path = "results", pattern = "*simOut.txt")
+
+names <- as.data.frame(filenames) %>%
+  separate(filenames, into = c("t1", "method", "t2"), sep = "_", remove = FALSE) %>%
+  select(filenames, method) %>%
+  mutate(filenames = as.character(filenames)) %>%
+  rownames_to_column("No")
+
+Fstsim <- list()
+
+# import data
+for (i in 1:nrow(names)){
+  
+  sim <- names %>%
+    filter(No == i)
+  
+  f <- sim$filenames
+  
+  s <- sim$method
+  
+  Fstsim[[s]] <- read_table2(paste0("results/", f), 
+                      skip = 1, col_names = c("Fst", "Het", "MeanHetBP", "MeanHetWP", "NumMutsOnTree")) %>%
+  select(Fst, Het)
+  
+  }
+
+Fstsim_tidy <- ldply(Fstsim, data.frame) %>%
+  rename(Sim = `.id`) %>%
+  filter(Sim == "nsim20kndemes9")
+
+p1 <- ggplot(Fstsim_tidy, aes(x = Het, y = Fst)) +
+  geom_point(shape = 1, size = 2, color = "black") +
+  geom_hline(yintercept = 0, color = "darkorange", linetype = "dotted", size = 1) +
+  geom_hline(aes(yintercept = mean(Fst)), color = "red", linetype = "dotted", size = 1) +
+  scale_y_continuous(limits = c(-0.012, 0.23)) +
+  labs(x = "heterozygosity", y = "Fst") +
+  theme_standard
+
+p2 <- ggplot(Fstsim_tidy, aes(x = Fst)) +
+  geom_histogram(binwidth = 0.01, color = "black", fill = "darkorange") +
+  scale_x_continuous(limits = c(0, 0.5)) +
+  scale_y_sqrt() +
+  labs(x = "Fst", y = "sqrt(no loci)") +
+  theme_standard
+
+
+# Get list of loci in data set
+temp <- as.data.frame(t(read_delim("data/POPGEN/BMA_by_pop_genepop.gen", 
+                   delim = ",", col_names = FALSE, skip = 1, n_max = 1))) %>%
+  rename(LOCUS = V1)
+
+loci <- as.data.frame(c(1:nrow(loci))) %>%
+  rename(LocNo = `c(1:nrow(loci))`) %>%
+  bind_cols(temp)
+
+# get filenames to loop over
+filenames <- list.files(path = "results", pattern = "*ObsOut.txt")
+
+names <- as.data.frame(filenames) %>%
+  separate(filenames, into = c("t1", "method", "t2"), sep = "_", remove = FALSE) %>%
+  select(filenames, method) %>%
+  mutate(filenames = as.character(filenames)) %>%
+  rownames_to_column("No")
+
+Fstobs <- list()
+
+# import data
+for (i in 1:nrow(names)){
+  
+  sim <- names %>%
+    filter(No == i)
+  
+  f <- sim$filenames
+  
+  s <- sim$method
+  
+  Fstobs[[s]] <- read_table2(paste0("results/", f), 
+                      skip = 1, col_names = c("LocNo", "Obs_Het", "Obs_Fst", "pval", "1Fstquantile")) %>%
+      select(LocNo, Obs_Fst, Obs_Het, pval)
+  
+  }
+
+# combine into single tidy data set ----
+Fstobs_tidy <- ldply(Fstobs, data.frame) %>%
+  rename(model = `.id`) %>%
+  mutate(model = ordered(model, levels = c("nsim20kndemes3", "nsim20kndemes4", "nsim20kndemes9", "nsim20kndemes25", "nsim20kndemes50", "nsim20kndemes100"))) %>%
+  left_join(loci) %>%
+  select(-LocNo) %>%
+  mutate(pval_corr = p.adjust(pval, method = "BH"))
+
+temp <- Fstobs_tidy %>%
+  filter(model %in% c("nsim20kndemes9"))
+
+p3 <- ggplot(temp, aes(x = Obs_Het, y = Obs_Fst, color = pval)) +
+  geom_point(shape = 1, size = 2) +
+  # facet_grid(. ~ model) +
+  scale_x_continuous(limits = c(0, 1)) +
+  scale_y_continuous(limits = c(-0.012, 0.23)) +
+  scale_color_viridis_c() +
+  labs(x = "heterozygosity", y = "Fst") +
+  theme_standard +
+  theme(legend.position = "right")
+
+p4 <- ggplot(temp, aes(x = Obs_Fst)) +
+  geom_histogram(binwidth = 0.025, color = "black", fill = "darkorange") +
+  # facet_grid(. ~ model) +
+  scale_x_continuous(limits = c(0, 0.5)) +
+  scale_y_sqrt() +
+  labs(x = "Fst", y = "sqrt(no loci)") +
+  theme_standard
+
+multiplot(p1, p2, p3, p4, cols = 2)
+
+```
+
+
+**Identify outlier loci potentially under selection and compare patterns of variance**
+
+Identify loci with corrected p-value < 0.05.
+
+```{r}
+
+outlier_arlequin <- Fstobs_tidy %>%
+  filter(pval_corr < 0.05,
+         model == "nsim20kndemes9") %>%
+  select(LOCUS) %>%
+  distinct()
+
+write_delim(outlier_arlequin, "results/arlequin.pop.outlier", delim = "\t")
+
+```
+
+A total of `r nrow(outlier_arlequin)` Fst-outlier loci were identified using `arlequin` (p < 0.05).
+
+
+## Compare identified Fst-outlier across methods
+
+Identify sets of loci shared between methods.
+
+```{r fig.cap="Comparison of set sizes per outlier method and intersecting sets of loci.", fig.height=5, fig.width=10}
+
+outl <- list()
+
+# outlier candidates bayescan
+outl[["bayscan"]] <- read_delim("results/bayescan.pop.outlier", delim = "\t")
+
+# outlier candidates arlequin
+outl[["arlequin"]] <- read_delim("results/arlequin.pop.outlier", delim = "\t")
+
+outl_tidy <- ldply(outl, data.frame) %>%
+  rename(METHOD = `.id`) %>%
+  mutate(LOCUS = str_trim(LOCUS, side = "both"))
+
+per_loc <- outl_tidy %>%
+  group_by(LOCUS) %>%
+  count()
+
+listInput <- list()
+
+for (n in names(outl)){
+  
+df <- outl[[n]]
+
+listInput[[n]] <- df$LOCUS
+  
+}
+
+upset(fromList(listInput), order.by = "freq", sets = names(listInput),
+      matrix.color = "darkblue", main.bar.color = "darkorange", sets.bar.color = "darkgreen",
+      text.scale = 2)
+
+```
+
+
+
+# Genetic-environmental association analysis
+
+## Spatial analysis: RDA using spatial information
+
+Redundancy analysis is an ordination method to determine how much variation of one set of variables (explanatory variables) explains the variation in another set of variables (response variables), i.e. it is the multivariate analog of a simple linear regression. It assumes that the relationship between the dependent (response) and independent (explanatory) variables is linear. 
+
+Here, it can be applied to understand which geographic and/or environmental factors explain the overall observed pattern of genetic variation on the landscape [@Oksanen2010; @Forester2016; @Forester2018].
+
+
+**Response variables: Genotypes**
+
+Format response variables (genetic data) as allele counts per locus and individual, homozygous calls are coded as 0 or 2, heterozygotes as 1. RDA requires a complete data set, therefore missing values are replaced with mean allele frequency. 
+
+`r margin_note("All alleles are coded as 0, 1, or 2 therefore, scaling/centering should not be necessary.")`
+
+```{r echo=TRUE}
+
+setPop(gen) <- ~POP
+
+# replace missing data
+nomissing <- missingno(gen, type = "mean")
+
+# extract allele counts
+allelecount <- as.data.frame(tab(nomissing))
+
+```
+
+The repsonse variables consist of `r ncol(allelecount)` loci genotyped for `r nrow(allelecount)` individuals across `r length(unique(popNames(gen)))` samples estuaries.
+
+
+**Explanatory variables: Moran's Eigenvector Maps (MEMs)**
+
+Calculation of spatial eigenvector maps requires a distance matrix. Use great circle distance calculated using lat/long information for individual samples. Use this matrix to calculate db-MEMs. Keep default setting for truncation, i.e. the length of the longest edge of the minimum spanning tree will be used as the threshold. Only positive MEMs are retained.
+
+MEMs are orthogonal vectors with a unit norm that maximizes spatial autocorrelation [@Griffith1996; @Dray2012].
+
+```{r}
+
+# select latitude and longitude
+xy <- strata %>%
+  select(LIB_ID, LONG, LAT) %>%
+  column_to_rownames("LIB_ID") %>%
+  jitterDupCoords(max = 0.00001)
+
+# calculate great circle distances
+coord <- xy %>%
+  select(LONG, LAT)
+
+spatialDist <- codep::gcd.hf(xy)
+
+# compute MEM
+dbMEM <- adespatial::dbmem(spatialDist)
+
+```
+
+This gives us `r length(colnames(dbMEM))` MEMs.
+
+Plot them using `adegraphics`
+
+```{r}
+
+adegraphics::s.label(xy, nb = attr(dbMEM, "listw"))
+
+```
+
+Visualize the MEM values - 1st MEMs are large spatial scales, spatial scales increasingly smaller for smaller MEMs (this is independent of genetic patterns; purely spatial/sampling design).
+
+```{r fig.cap="Fig 2: dbMEM values per samples. Positive values are blue, negative values are yellow, the size of the circles are scaled by magnitude.", fig.width=8, fig.height=6}
+
+# create tidy dataframe
+tidyMEMs <- strata %>%
+  select(LIB_ID, LONG, LAT) %>%
+  bind_cols(dbMEM) %>%
+  pivot_longer(cols = 4:9, names_to = "MEM", values_to = "VALUE") %>%
+  mutate(ABSOLUTE_VALUE = abs(VALUE),
+         DIRECTION = ifelse(VALUE < 0, "NEGATVE", "POSITIVE"))
+
+# plot samples 
+ggplot() +
+  geom_path(data = map, 
+            aes(x = long, y = lat, group = group), 
+            color = "black", size = 0.5) +
+  geom_path(data = states, 
+            aes(x = long, y = lat, group = group), 
+            color = "black", size = 0.2, linetype = "dashed") +
+  geom_point(data = tidyMEMs, 
+             aes(x = LONG, y = LAT, fill = DIRECTION, size = ABSOLUTE_VALUE),
+             shape = 21, color = "black") +
+  facet_wrap(~ MEM) +
+  scale_fill_manual(values = c("gold", "blue")) +
+  xlim(-98, -77) +
+  ylim(18, 31) +
+  labs(x = " ", y = " ") +
+  theme_standard
+
+```
+
+
+**Model selection**
+
+Select best model for spatial variables using Forward model selection using permutation tests on rda object, a model is defined and a given scope of models considered. The function alternates with `drop` and `add` steps and stops when model is not changed during one step.
+
+```{r echo=TRUE}
+
+# run initial rda
+rda.xy = rda(allelecount ~ ., data.frame(dbMEM), scale = FALSE)
+
+stp.xy = ordiR2step(rda(allelecount ~ 1, data.frame(dbMEM)), 
+                   scope = formula(rda.xy), 
+                   R2scope = TRUE,
+                   scale = FALSE, 
+                   Pin = 0.05,
+                   Pout = 0.1,
+                   direction="both", 
+                   R2permutations = 999,
+                   parallel = 45)
+
+```
+
+
+**Run RDA**
+
+The selected model consists of `r knitr::combine_words(attributes(stp.xy$terms)$term.labels)`.
+
+```{r echo=TRUE}
+
+xy_selected <- dbMEM %>%
+  as.data.frame() %>%
+  select(one_of(attributes(stp.xy$terms)$term.labels))
+
+rda.xy <- rda(allelecount ~ ., data = xy_selected, scale = FALSE)
+
+```
+
+Determine proportion of genetic variance explained by geographic data by running RDA using the selected spatial variables as the explanatory variables, i.e. fitting linear trend surface (accounting for linear geographic scale).
+
+
+```{r}
+
+rda.xy
+
+```
+
+Test for significance using a permutation test to generate p-value indicating whether to reflect null hypothesis (geography does not explain genetic variation). Rows of unconstrained matrix (genetic data set) are repeatedly randomized for n permutations. Relationship is considered significant if observed relationship is stronger than the randomly permuted relationships.
+
+```{r echo=TRUE}
+
+anova.cca(rda.xy, 
+          permutations = 1000,
+          parallel = 45)
+
+```
+
+Proportion of variance explained by the environmental predictors is `Proportion` column of `Constrained` row in summary table (equivalent to R2 of multiple regression). 
+
+R2 (`r round(RsquareAdj(rda.xy)$r.squared, digits = 4)`) needs to be adjusted based on the number of predictors, as the number of explanatory variables inflates the apparent amount of explained variance due to random correlation. The adjusted R2 values is `r round(RsquareAdj(rda.xy)$adj.r.squared, digits = 4)`
+
+```{r fig.cap="Fig 3: Eigenvalues for the constrained axes reflect the variance explained by each canonical axis", fig.height=3, fig.width=4}
+
+summary(eigenvals(rda.xy, model = "constrained"))
+
+eig <- as.data.frame(rda.xy$CCA$eig) %>%
+  rename(EIGENVALUE = `rda.xy$CCA$eig`) %>%
+  rownames_to_column("RDA_AXIS") %>%
+  mutate(VARIANCE = EIGENVALUE/sum(EIGENVALUE))
+
+ggplot(eig, aes(x = RDA_AXIS, y = VARIANCE)) +
+  geom_bar(stat = "identity", color = "black", fill = "darkorange") +
+  labs(x = "RDA axis", y = "% variance explained") +
+  theme_standard
+
+```
+
+Compare constraints (explanatory variables).
+
+```{r fig.cap="Fig 4: Biplot of constraints.", fig.height=7, fig.width=8}
+
+geog_rda <- as.data.frame((rda.xy$CCA$biplot)) %>%
+  rownames_to_column("SPATIAL")
+
+ggplot() +
+  geom_hline(yintercept = 0, color = "darkblue", linetype = "dashed", size = 0.75) +
+  geom_vline(xintercept = 0, color = "darkblue", linetype = "dashed", size = 0.75) +
+  geom_label_repel(data = geog_rda, aes(x = RDA1, y = RDA2, label = SPATIAL)) +
+  geom_segment(data = geog_rda, aes(x = 0, y = 0, xend = RDA1, yend = RDA2), 
+               arrow = arrow(length = unit(0.2, "cm")), 
+               color="darkred", size = 1) +
+  labs(x = "RDA 1", y = "RDA 2") +
+  theme_standard
+
+```
+
+Use Mahalanobis distance to identify alleles with strongest association to first three RDA axis.
+
+```{r fig.cap="Fig 5: Distribution of alleles; alleles from loci with at least one allele flagged as non-associated (grey) vs outlier (red) based on Mahalanobis distance threshold of 18.46 for four degrees of freedom (p < 0.001).", fig.height=9, fig.width=8}
+
+# number of axis
+n <- length(attributes(stp.xy$terms)$term.labels)
+
+# extract allele scores
+locus_rda.xy <- rda_alleles(rda.xy, n) %>%
+  rownames_to_column("rownames") %>%
+  select(-rownames)
+
+temp <- locus_rda.xy %>%
+  select(ALLELE_NAME, RDA1, RDA2, RDA3, RDA4) %>%
+  column_to_rownames("ALLELE_NAME")
+
+# calculate mahalanobis distance
+mah <- as.data.frame(mahalanobis(temp, colMeans(temp), cov(temp), decreasing=TRUE)) %>%
+  rownames_to_column("ALLELE_NAME") %>%
+  rename(MAH_DIST = `mahalanobis(temp, colMeans(temp), cov(temp), decreasing = TRUE)`) %>%
+  separate(ALLELE_NAME, into = c("LOCUS", "ALLELE"), sep = "\\.", remove = FALSE) %>%
+  # retain only allele with highest value per locus
+  group_by(LOCUS) %>%
+  slice_max(MAH_DIST, with_ties = FALSE) %>%
+  ungroup() %>%
+  # flag outlier
+  select(LOCUS, MAH_DIST) %>%
+  mutate(RDA_OUTLIER = ifelse(MAH_DIST > 18.46, "OUTLIER", "NON_ASSOCIATED"))
+
+# add information to data frame
+locus_rda.xy <- locus_rda.xy %>%
+  left_join(mah)
+
+# plot distribution
+ggplot() +
+  geom_point(data = locus_rda.xy, 
+             aes(x = RDA1_SCALED3, y = RDA2_SCALED3, color = RDA_OUTLIER),
+             shape = 21, size = 3) +
+  geom_segment(data = geog_rda, aes(x = 0, y = 0, xend = RDA1, yend = RDA2),
+               arrow = arrow(length = unit(0.2, "cm")),
+               color="darkred", size = 1) +
+  geom_label_repel(data = geog_rda, aes(x = RDA1, y = RDA2, label = SPATIAL)) +
+  coord_fixed(ratio = 1) +
+  geom_vline(xintercept = 0, color = "darkred", linetype = "dashed", size = 0.5) +
+  geom_hline(yintercept = 0, color = "darkred", linetype = "dashed", size = 0.5) +
+  scale_color_manual(values = c("grey", "red")) +
+  labs(x = "RDA 1", y = "RDA 2") +
+  theme_standard
+
+
+# count loci with flagged allele
+kable(
+  count(mah, MAH_DIST >= 18.46),
+  caption = "Table 1a: Number of loci significantly associated allele (for bivariate distribution critical value = 13.82 (p < 0.001))"
+)
+
+kable(
+  count(mah, MAH_DIST >= 25),
+  caption = "Table 1b: Number of loci significantly associated allele (for bivariate distribution critical value = 25 (p < 0.001))"
+)
+
+# write significant loci to file
+sign_loci <- mah %>%
+  filter(MAH_DIST >= 18.46)
+
+write_delim(sign_loci, "results/significant_loci_spatial.rda", delim = "\t")
+
+```
+
+Compare clustering of individual based on **weighted average individual scores**, i.e. weighted averages of allele scores that are as similar to linear combination scores as possible. Weights are individual totals of alleles. To determine how well explanatory variables separate groups of individuals or if explanatory variables can be used to discriminate between groups of individuals, use wa-scores.
+
+```{r fig.cap="Fig 6: RDA biplot indicating spatial variables (arrows) and clustering of individuals on RDA1-3.", fig.height=17, fig.width=8}
+
+ind_rda.xy <- rda_indv(rda.xy, n) %>%
+  left_join(strata)
+
+p1 <- ggplot() +
+  geom_vline(xintercept = 0, color = "darkblue", linetype = "dashed") +
+  geom_hline(yintercept = 0, color = "darkblue", linetype = "dashed") +
+  geom_label_repel(data = geog_rda, aes(x = RDA1, y = RDA2, label = SPATIAL)) +
+  geom_segment(data = geog_rda, aes(x = 0, y = 0, xend = RDA1, yend = RDA2),
+               arrow = arrow(length = unit(0.2, "cm")),
+               color="darkred", size = 1) +
+  geom_point(data = ind_rda.xy, aes(x = RDA1_WA_SCALED3, y= RDA2_WA_SCALED3, fill = POP),
+             shape = 21, size = 3) +
+  scale_fill_manual(values = col_pops) +
+  labs(x = "RDA1", y = "RDA2") +
+  theme_standard +
+  theme(legend.position = "bottom")
+
+
+p2 <- ggplot() +
+  geom_vline(xintercept = 0, color = "darkblue", linetype = "dashed") +
+  geom_hline(yintercept = 0, color = "darkblue", linetype = "dashed") +
+  geom_label_repel(data = geog_rda, aes(x = RDA2, y = RDA3, label = SPATIAL)) +
+  geom_segment(data = geog_rda, aes(x = 0, y = 0, xend = RDA2, yend = RDA3),
+               arrow = arrow(length = unit(0.2, "cm")),
+               color="darkred", size = 1) +
+  geom_point(data = ind_rda.xy, aes(x = RDA2_WA_SCALED3, y= RDA3_WA_SCALED3, fill = POP),
+             shape = 21, size = 3) +
+  scale_fill_manual(values = col_pops) +
+  labs(x = "RDA2", y = "RDA3") +
+  theme_standard +
+  theme(legend.position = "bottom")
+
+multiplot(p1, p2, cols = 1)
+
+```
+
+
+* RDA1 separates Sthn Gulf, Nth. Gulf and Atlantic. Nthn Gulf forms one cluster but W/C/E groups are identifiable.
+* RDA2 groups Atlantic/Sthn Gulf vs Nthn Gulf. Sample locations w/in Nthn.Gulf cluster together.
+
+
+## Environmental analysis
+
+**Response variables: Genotypes**
+
+Format response variables (genetic data) as allele counts per locus and individual, homozygous calls are coded as 0 or 2, heterozygotes as 1. RDA requires a complete data set, therefore missing values are replaced with mean allele frequency. 
+
+`r margin_note("All alleles are coded as 0, 1, or 2 therefore, scaling/centering should not be necessary.")`
+
+```{r echo=TRUE}
+
+setPop(gen) <- ~POP
+
+# replace missing data
+nomissing <- missingno(gen, type = "mean")
+
+# extract allele counts
+allelecount <- as.data.frame(tab(nomissing))
+
+```
+
+The repsonse variables consist of `r ncol(allelecount)` loci genotyped for `r nrow(allelecount)` individuals across `r length(unique(popNames(gen)))` samples estuaries.
+
+
+**Explanatory variables: Bioclim variables**
+
+Download & Format environmental parameters
+
+```{r echo=TRUE}
+
+# access marine data sets
+marine <- list_datasets(terrestrial = FALSE, marine = TRUE)
+
+# identify available layers & break into sets
+layers <- list_layers(marine) %>%
+  separate(layer_code, into = c("dataset", "parameter", "stat"), extra = "merge", remove = FALSE) %>%
+  filter(!dataset == "BO2") %>%
+  mutate(SET = case_when(dataset == "MS" ~ "MARSPEC",
+                         dataset == "BO" ~ "BIO_CLIM",
+                         grepl("phytoplankton", description, ignore.case = TRUE) ~ "carb_phytopl",
+                         grepl("Chlorophyll", description, ignore.case = TRUE) ~ "chlorophyll",
+                         grepl("velocity", description, ignore.case = TRUE) ~ "velocity",
+                         grepl("oxygen", description, ignore.case = TRUE) ~ "DO",
+                         grepl("Iron", description, ignore.case = TRUE) ~ "Iron",
+                         grepl("Light", description, ignore.case = TRUE) ~ "Light",
+                         grepl("Nitrate", description, ignore.case = TRUE) ~ "Nitrate",
+                         grepl("Phosphate", description, ignore.case = TRUE) ~ "Phosphate",
+                         grepl("Primary", description, ignore.case = TRUE) ~ "PrimaryProd",
+                         grepl("ice", description, ignore.case = TRUE) ~ "SeaIce",
+                         grepl("surface", description, ignore.case = TRUE) ~ "SeaSurface",
+                         grepl("water", description, ignore.case = TRUE) ~ "SeaWater",
+                         grepl("Silicate", description, ignore.case = TRUE) ~ "Silicate"))
+
+```
+
+Loop through layers to download and extract values for coordinates.
+
+```{r eval=FALSE, echo=TRUE}
+
+# vector with sets
+set <- unique(layers$SET)
+
+set <- set[1:2]
+
+for(s in set){
+  
+  cat(s,"start download ...")
+  
+  # data frame for results
+  env <- strata %>%
+    dplyr::select(LIB_ID, POP, LAT, LONG)
+  
+  # subset layers
+  layer_subset <- layers %>%
+    filter(SET == s)
+  
+  # filename
+  path <- glue("data/POPGEN/{s}_env.param")
+
+  # download all the layers in the set
+  for(l in layer_subset$layer_code){
+
+    # download layer
+    env_layer <- load_layers(l)
+
+    # coordinates
+    xy <- xy
+
+    # extract values for xy coordinates
+    param <- raster::extract(x = env_layer,
+                     y = xy,
+                     method = "bilinear") %>%
+        as.data.frame() %>%
+        magrittr::set_names(l)
+
+    # combine results
+    env <- env %>%
+      bind_cols(param)
+    
+    # write to file
+    write_delim(env, path, delim = "\t")
+
+    }
+  
+}
+
+```
+
+Load variables for all sets of variables.
+
+```{r}
+
+# create a list from these files
+filenames <- list.files(path = "data/POPGEN/", pattern = "env.param")
+
+# empty list
+env_param <- list()
+ 
+# create a loop to read in your data
+for (f in filenames){
+  
+  path = glue("data/POPGEN/{f}")
+  
+  df <- read_delim(path, delim = "\t") %>%
+    select(-POP, -LAT, -LONG)
+  
+  env_param[[f]] <- df %>%
+    pivot_longer(cols = 2:ncol(df), names_to = "PARAMETER", values_to = "VALUES")
+  
+}
+ 
+# bind into single data frame
+env_param_tidy <- ldply(env_param, data.frame) %>%
+  select(-`.id`)
+
+```
+
+**Model selection**
+
+We are going to use only the original BIO_CLIM and MARSPEC data sets.
+
+```{r}
+
+# just marspec and original bioclim
+select <- layers %>%
+  filter(SET %in% c("BIO_CLIM","MARSPEC"))
+
+kable(
+  select %>%
+    select(layer_code, description),
+  caption = "Table 2: MARSPEC and BIO-CLIM variables used for model selection."
+)
+
+```
+
+Run model selection using stepwise process.
+
+```{r echo=TRUE, eval=FALSE}
+
+# format data for rda
+env_param <- env_param_tidy %>%
+  filter(PARAMETER %in% select$layer_code) %>%
+  group_by(PARAMETER) %>%
+  mutate(VALUES = replace(VALUES, is.na(VALUES), mean(VALUES, na.rm=TRUE))) %>%
+  pivot_wider(names_from = "PARAMETER", values_from = "VALUES") %>%
+  column_to_rownames("LIB_ID")
+
+write_delim(env_param, "data/POPGEN/bioclim.param", delim = "\t")
+
+# run initial rda with all parameters
+rda <- rda(allelecount ~ ., data = env_param, scale = TRUE)
+
+# stepwise selection
+stp.env = ordiR2step(rda(allelecount ~ 1, env_param), 
+                   scope = formula(rda), 
+                   R2scope = TRUE,
+                   scale = FALSE, 
+                   Pin = 0.05,
+                   Pout = 0.1,
+                   direction="both", 
+                   R2permutations = 999,
+                   parallel = 35)
+
+```
+
+
+Select best model for spatial variables using step-wise model selection based on permutation tests of rda object, a model is defined and a given scope of models considered. The function alternates with `drop` and `add` steps and stops when model is not changed during one step.
+
+```{r}
+
+# parameters selected by forward selection
+selected <- c("MS_sst06_5m", "MS_bathy_5m", "BO_phosphate", "BO_dissox", "BO_parmean")
+
+```
+
+The best model consists of `r knitr::combine_words(selected)`. 
+
+```{r fig.cap="Distribution of values per sample location for each parameter selected for the environmental RDA model.", fig.width=10, fig.height=15}
+
+tmp <-  env_param_tidy %>%
+  filter(PARAMETER %in% selected) %>%
+  left_join(strata) %>%
+  select(LIB_ID, POP, REGION, PARAMETER, VALUES)
+
+ggplot(tmp, aes(x = POP, y = VALUES, color = REGION)) +
+  geom_boxplot() +
+  scale_color_manual(values = col_regs) +
+  facet_grid(PARAMETER ~ ., scales = "free") +
+  theme_facet
+
+kable(
+  layers %>%
+    filter(layer_code %in% selected) %>%
+    select(layer_code, description),
+  caption = "Table 3: Variables selected using stepwise model selection based on permutation tests of rda object for Pin = 0.05 and Pout = 0.1."
+)
+
+```
+
+
+**Run RDA**
+
+Run RDA using selected principle components and test for significance.
+
+```{r echo=TRUE}
+
+env_model <-  env_param_tidy %>%
+  filter(PARAMETER %in% selected) %>%
+  group_by(PARAMETER) %>%
+  mutate(VALUES = replace(VALUES, is.na(VALUES), mean(VALUES, na.rm=TRUE))) %>%
+  pivot_wider(names_from = "PARAMETER", values_from = "VALUES") %>%
+  column_to_rownames("LIB_ID")
+  
+rda.env <- rda(allelecount ~ ., data = env_model, scale = TRUE)
+
+```
+
+Determine the proportion of genetic variance explained by geographic data by running RDA using the selected environemtal variables as the explanatory variables.
+
+```{r}
+
+rda.env
+
+```
+
+Test for significance using a permutation test to generate p-value indicating whether to reflect the null hypothesis (environmental data does not explain genetic variation). Rows of unconstrained matrix (genetic data set) are repeatedly randomized for n permutations. Relationship is considered significant if observed relationship is stronger than the randomly permuted relationships.
+
+```{r echo=TRUE}
+
+anova.cca(rda.env, 
+          permutations = 1000,
+          parallel = 45)
+
+```
+
+The adjusted R2 values is `r round(RsquareAdj(rda.env)$adj.r.squared, digits = 4)`
+
+
+**Compare results**
+
+```{r fig.cap="Fig 7: Eigenvalues for the constrained axes reflect the variance explained by each canonical axis.", fig.height=4, fig.width=8}
+
+summary(eigenvals(rda.env, model = "constrained"))
+
+eig <- as.data.frame(rda.env$CCA$eig) %>%
+  rename(EIGENVALUE = `rda.env$CCA$eig`) %>%
+  rownames_to_column("RDA_AXIS") %>%
+  mutate(VARIANCE = EIGENVALUE/sum(EIGENVALUE))
+
+ggplot(eig, aes(x = RDA_AXIS, y = VARIANCE)) +
+  geom_bar(stat = "identity", color = "black", fill = "darkorange") +
+  labs(x = "RDA axis", y = "% variance explained") +
+  theme_standard
+
+```
+
+Compare constraints (explanatory variables).
+
+```{r fig.cap="Fig 8: Biplot of constraints.", fig.height=7, fig.width=8}
+
+env_rda <- as.data.frame((rda.env$CCA$biplot)) %>%
+  rownames_to_column("ENV")
+
+ggplot() +
+  geom_hline(yintercept = 0, color = "darkblue", linetype = "dashed", size = 0.75) +
+  geom_vline(xintercept = 0, color = "darkblue", linetype = "dashed", size = 0.75) +
+  geom_label_repel(data = env_rda, aes(x = RDA1, y = RDA2, label = ENV)) +
+  geom_segment(data = env_rda, aes(x = 0, y = 0, xend = RDA1, yend = RDA2), 
+               arrow = arrow(length = unit(0.2, "cm")), 
+               color="darkred", size = 1) +
+  labs(x = "RDA 1", y = "RDA 2") +
+  theme_standard
+
+```
+
+Use Mahalanobis distance to identify alleles with strongest association to first two RDA axis.
+
+```{r fig.cap="Fig 9: Distribution of alleles; alleles from loci with at least one allele flagged as non-associated (grey) vs outlier (red) based on Mahalanobis distance threshold of 20.51 for p < .001, (5 degrees of freedom)", fig.height=8, fig.width=8}
+
+# number of axis
+n <- nrow(eig)
+
+# extract allele scores
+locus_rda.env <- rda_alleles(rda.env, n) %>%
+  rownames_to_column("rownames") %>%
+  select(-rownames)
+
+temp <- locus_rda.env %>%
+  select(ALLELE_NAME, RDA1, RDA2, RDA3, RDA4, RDA5) %>%
+  column_to_rownames("ALLELE_NAME")
+
+# calculate mahalanobis distance
+mah <- as.data.frame(mahalanobis(temp, colMeans(temp), cov(temp), decreasing=TRUE)) %>%
+  rownames_to_column("ALLELE_NAME") %>%
+  rename(MAH_DIST = `mahalanobis(temp, colMeans(temp), cov(temp), decreasing = TRUE)`) %>%
+  separate(ALLELE_NAME, into = c("LOCUS", "ALLELE"), sep = "\\.", remove = FALSE) %>%
+  # retain only allele with highest value per locus
+  group_by(LOCUS) %>%
+  slice_max(MAH_DIST, with_ties = FALSE) %>%
+  ungroup() %>%
+  # flag outlier
+  select(LOCUS, MAH_DIST) %>%
+  mutate(RDA_OUTLIER = ifelse(MAH_DIST > 20.51, "OUTLIER", "NON_ASSOCIATED"))
+
+# add information to data frame
+locus_rda.env <- locus_rda.env %>%
+  left_join(mah)
+
+# plot distribution
+ggplot() +
+  geom_point(data = locus_rda.env, 
+             aes(x = RDA1_SCALED3, y = RDA2_SCALED3, color = RDA_OUTLIER),
+             shape = 21, size = 3) +
+  geom_segment(data = env_rda, aes(x = 0, y = 0, xend = RDA1, yend = RDA2),
+               arrow = arrow(length = unit(0.2, "cm")),
+               color="darkred", size = 1) +
+  geom_label_repel(data = env_rda, aes(x = RDA1, y = RDA2, label = ENV)) +
+  coord_fixed(ratio = 1) +
+  geom_vline(xintercept = 0, color = "darkred", linetype = "dashed", size = 0.5) +
+  geom_hline(yintercept = 0, color = "darkred", linetype = "dashed", size = 0.5) +
+  scale_color_manual(values = c("grey", "red")) +
+  labs(x = "RDA 1", y = "RDA 2") +
+  theme_standard
+
+# count loci with flagged allele
+kable(
+  count(mah, MAH_DIST >= 20.51),
+  caption = "Table 4a: Number of loci significantly associated allele (for bivariate distribution critical value = 13.82 (p < 0.001))"
+)
+
+kable(
+  count(mah, MAH_DIST >= 25),
+  caption = "Table 4b: Number of loci significantly associated allele."
+)
+
+# write significant loci to file
+sign_loci <- mah %>%
+  filter(MAH_DIST >= 20.51)
+
+write_delim(sign_loci, "results/significant_loci_env.rda", delim = "\t")
+
+```
+
+Compare clustering of individual based on **weighted average individual scores**, i.e. weighted averages of allele scores that are as similar to linear combination scores as possible. Weights are individual totals of alleles. To determine how well explanatory variables separate groups of individuals or if explanatory variables can be used to discriminate between groups of individuals, use wa-scores.
+
+```{r fig.cap="Fig 10: RDA biplot indicating environmental variables (arrows) and clustering of individuals.", fig.height=17, fig.width=8}
+
+ind_rda.env <- rda_indv(rda.env, n) %>%
+  left_join(strata)
+
+# plot by estuary
+p1 <- ggplot() +
+  geom_vline(xintercept = 0, color = "darkblue", linetype = "dashed") +
+  geom_hline(yintercept = 0, color = "darkblue", linetype = "dashed") +
+  geom_label_repel(data = env_rda, aes(x = RDA1, y = RDA2, label = ENV)) +
+  geom_segment(data = env_rda, aes(x = 0, y = 0, xend = RDA1, yend = RDA2),
+               arrow = arrow(length = unit(0.2, "cm")),
+               color="darkred", size = 1) +
+  geom_point(data = ind_rda.env, aes(x = RDA1_WA_SCALED3, y= RDA2_WA_SCALED3, fill = POP),
+             shape = 21, size = 3) +
+  scale_fill_manual(values = col_pops) +
+  labs(x = "RDA1", y = "RDA2") +
+  theme_standard +
+  theme(legend.position = "bottom")
+
+p2 <- ggplot() +
+  geom_vline(xintercept = 0, color = "darkblue", linetype = "dashed") +
+  geom_hline(yintercept = 0, color = "darkblue", linetype = "dashed") +
+  geom_label_repel(data = env_rda, aes(x = RDA2, y = RDA3, label = ENV)) +
+  geom_segment(data = env_rda, aes(x = 0, y = 0, xend = RDA2, yend = RDA3),
+               arrow = arrow(length = unit(0.2, "cm")),
+               color="darkred", size = 1) +
+  geom_point(data = ind_rda.env, aes(x = RDA2_WA_SCALED3, y= RDA3_WA_SCALED3, fill = POP),
+             shape = 21, size = 3) +
+  scale_fill_manual(values = col_pops) +
+  labs(x = "RDA2", y = "RDA3") +
+  theme_standard +
+  theme(legend.position = "bottom")
+
+multiplot(p1, p2, cols = 1)
+
+```
+
+
+## Partitioning of variance
+
+Perform RDA for all variables (spatial and environmental; full model).
+
+```{r}
+
+xy.mat <- as.matrix(xy_selected)
+env.mat <- as.matrix(env_model)
+
+# overall model
+rda.all <- rda(allelecount ~ xy.mat + env.mat, scale = FALSE)
+
+rda.all
+
+```
+
+Test for significance of overall model.
+
+```{r}
+
+# Test significance of overall model
+sig_overall_all <- anova.cca(rda.all,
+                   permutations = 999,
+                   parallel = 45)
+
+pval_overall_all <- sig_overall_all$`Pr(>F)`[1]
+
+```
+
+The overall model is significant (P = `r pval_overall_all`).
+
+
+Partition the variation in genetic data into components accounted for by environmental and spatial variables and their combined effect using adjusted R squared to assess partitions explained by explanatory tables and their combinations.
+
+```{r}
+
+# Partition the variance ====
+vpart.all <- varpart(allelecount, ~ xy.mat, ~ env.mat)
+
+vpart.all
+
+```
+
+Extract fraction explained by each component:
+
+* a+b: variation explained by spatial variables (independent/marginal effect, i.e. variation explained if spatial variables only explanatory variables).
+* b+c: variation explained by environmental variables (marginal effect of environmental variables).
+* a+b+c: variation explained by X1 (spatial variables), X2 (environmental variables), and shared effect of X1 + X2 (i.e. result of correlation between both sets of variables)
+* a: conditioned/partial variation explained by X1 (spatial variables)
+* b: shared variation explained by X1 (spatial variables) and X2 (environmental variables); cannot be attributed to one or the other (i.e. result of correlation between both sets of variables).
+* c: conditioned/partial variation explained by X2 (environmental variables)
+* d: residual (unexplained)
+
+
+Test significance of all components using permuted p-values.
+
+```{r}
+
+# adjusted R squared for each component
+partitions <- c("xy+shared", "env+shared", "xy+env+shared", "xy", "shared", "env", "residuals")
+
+all_values <- c(vpart.all$part$fract$Adj.R.squared, vpart.all$part$indfract$Adj.R.squared)
+
+# Test significance of individual fractions ====
+all_pvals <- c()
+
+# Significance of xy + shared
+sig_geo_shared_all <- anova.cca(rda(allelecount, xy.mat),
+                                permutations = 999, parallel = 55)
+
+all_pvals[1] <- sig_geo_shared_all$`Pr(>F)`[1]
+
+# Significance of env + shared
+sig_env_shared_all <- anova.cca(rda(allelecount, env.mat),
+                                permutations = 999, parallel = 55)
+
+all_pvals[2] <- sig_env_shared_all$`Pr(>F)`[1]
+
+# Significance of xy + shared + env
+exp_vars <- cbind(env.mat, xy.mat)
+
+sig_geo_shared_env_all <- anova.cca(rda(allelecount, exp_vars),
+                                    permutations = 999, parallel = 55)
+
+all_pvals[3] <- sig_geo_shared_env_all$`Pr(>F)`[1]
+
+# Significance of xy
+sig_geo_all <- anova.cca(rda(allelecount, xy.mat, env.mat),
+                         permutations = 999, parallel = 55)
+
+all_pvals[4] <- sig_geo_all$`Pr(>F)`[1]
+
+# Significance of shared fraction is untestable
+all_pvals[5] <- NA
+
+# Significance of env
+sig_env_all <- anova.cca(rda(allelecount, env.mat, xy.mat),
+                         permutations = 999, parallel = 55)
+
+all_pvals[6] <- sig_env_all$`Pr(>F)`[1]
+
+# Significance of residual fraction is untestable
+all_pvals[7] <- NA
+
+# combine into single table
+partition_sign <- data.frame(partitions, all_values, all_pvals) %>%
+  rename(PARTITION = partitions,
+         VARIANCE = all_values,
+         PVAL = all_pvals) %>%
+  arrange(desc(VARIANCE))
+
+
+kable(
+  partition_sign,
+  caption = "Variance partitioning of variance explained by db_MEMs (xy), environmental variables (env), and shared effects due to correlation of xy and env."
+)
+
+```
+
+
+# Create neutral and outlier data sets
+
+## Compare sets of extracted loci
+
+Tidy data set containing loci (contigs) flagged as Fst-outlier for each method, and loci flagged as strongly associated with first three RDA axis for spatial and environmental RDAs and identify sets of loci shared between methods.
+
+```{r fig.cap="Fig. 14: Comparison of set sizes per outlier method and intersecting sets of loci.", fig.height=5, fig.width=8}
+
+# make empty list for results
+outl <- list()
+
+# outlier candidates bayescan
+outl[["bayscan"]] <- read_delim("results/bayescan.pop.outlier", delim = "\t") %>%
+  mutate(LOCUS = str_trim(LOCUS, side = "both"))
+  
+
+# outlier candidates arlequin
+outl[["arlequin"]] <- read_delim("results/arlequin.pop.outlier", delim = "\t") %>%
+  mutate(LOCUS = str_trim(LOCUS, side = "both"))
+
+# associated loci spatial
+outl[["xy"]] <- read_delim("results/significant_loci_spatial.rda", delim = "\t") %>%
+  select(LOCUS) %>%
+  mutate(LOCUS = str_trim(LOCUS, side = "both"))
+
+# associated loci env
+outl[["env"]] <- read_delim("results/significant_loci_env.rda", delim = "\t") %>%
+  select(LOCUS) %>%
+  mutate(LOCUS = str_trim(LOCUS, side = "both"))
+
+# make single dataframe
+outl_tidy <- ldply(outl, data.frame) %>%
+  rename(METHOD = `.id`)
+
+# plot UpsetR
+listInput <- list()
+
+for (n in names(outl)){
+  
+df <- outl[[n]]
+
+listInput[[n]] <- df$LOCUS
+  
+}
+
+upset(fromList(listInput), 
+      order.by = "freq", 
+      sets = names(listInput),
+      nintersects = NA,
+      matrix.color = "darkblue", 
+      main.bar.color = "darkorange", 
+      sets.bar.color = "darkgreen",
+      text.scale = 2)
+
+# plot UpsetR
+listInput <- list()
+
+for (n in c("bayscan", "arlequin", "env" )){
+  
+df <- outl[[n]]
+
+listInput[[n]] <- df$LOCUS
+  
+}
+
+upset(fromList(listInput), 
+      order.by = "freq", 
+      sets = names(listInput),
+      nintersects = NA,
+      matrix.color = "darkblue", 
+      main.bar.color = "darkorange", 
+      sets.bar.color = "darkgreen",
+      text.scale = 2)
+
+
+```
+
+## Create data sets
+
+Outlier loci were defined as loci identified by **at least one of the Fst-outlier methods or the RDA**.
+
+```{r results="hide"}
+
+outl_loc <- outl_tidy %>%
+  filter(METHOD %in% c("bayscan", "arlequin", "env"))
+
+keeploc <- outl_loc$LOCUS
+gen_o <- gen[loc = keeploc]
+
+setPop(gen) <- ~POP
+
+# convert to tidy data set
+tidy <- tidy_genomic_data(data = gen_o, filename = NULL) %>%
+  dplyr::select(1:6)
+
+# write tidy data set to file
+write_delim(tidy, "data/POPGEN/BMA.tidy.outl-all.genotypyes", delim = "\t")
+
+# write genepop file
+write_genepop(data = tidy,
+              filename = "data/POPGEN/BMA_by_pop_all-outl",
+              genepop.header = "gafftop sail catfish grouped by population all Fst-outlier and RDA loci")
+
+```
+
+The outlier data set consists of `r nLoc(gen_o)`loci.
+
+Create neutral data set as loci remaining after all outlier loci are removed from data set.
+
+```{r results="hide"}
+
+removeloc <- c(outl_loc$LOCUS)
+
+gen_nn <- genind.rem.loci(gen, removeloc)
+
+setPop(gen_nn) <- ~POP
+
+# convert to tidy data set
+tidy <- tidy_genomic_data(data = gen_nn, filename = NULL) %>%
+  dplyr::select(1:6)
+
+# write tidy data set to file
+write_delim(tidy, "data/POPGEN/BMA.tidy.only-neutral.genotypyes", delim = "\t")
+
+# write genepop file
+write_genepop(data = tidy,
+              filename = "data/POPGEN/BMA_by_pop_only-neutral",
+              genepop.header = "gafftop sail catfish grouped by population all Fst-outlier and RDA loci removed (neutral loci)")
+
+
+```
+
+The neutral data set consists of `r nLoc(gen_nn)` loci.
+
+# K-means clustering and Discriminant Analysis of Principle Components
+
+K-means clustering can be used for model-free clustering based on similarity to identify clusters of individuals. Discriminant analysis of principle components (DAPC) implemented in `adegenet` [@Jombart2010] can then used to determine membership probabilities of each sample to each inferred cluster. During DAPC, the genotype matrix is first PCA-transformed, samples are paritioned into a within- and between-group component to maximize discrimination between groups using linear discriminant analysis; the discriminant functions can be expressed as linear combinations of alleles and therefore, allele contributions to the identified patterns can be computed.
+
+
+## Outlier loci
+
+Use k-means clustering to identify clusters based on genetic similarity (data transformed using PCA). For clustering it is appropriate to retain all PCs (all variance in the data set), as overfitting is not an issue.
+
+```{r fig.cap="Fig 1: AIC for data clustered into K = 1 - 40 groups using k-means clustering.", fig.height=4, fig.width=7}
+
+# k-means clustering
+grp_AIC <- find.clusters.genind(gen_o, n.pca = 500, method = "kmeans",
+                            stat = "AIC", choose.n.clust = FALSE, criterion = "min",
+                            max.n.clust = 10)
+
+
+Kstat <- as.data.frame(grp_AIC$Kstat) %>%
+  rownames_to_column("K") %>%
+  separate(K, c("temp", "K"), sep = "=") %>%
+  mutate(K = as.numeric(K)) %>%
+  rename(AIC = `grp_AIC$Kstat`) %>%
+  select(K, AIC)
+
+ggplot(Kstat, aes(x = K, y = AIC)) +
+  geom_line() +
+  geom_point(shape = 21, color = "black", fill = "darkorange", size = 3) +
+  labs(x = "number of clusters K", y = "AIC") +
+  theme_standard
+
+```
+
+Minimum value for AIC is obtained for `r names(grp_AIC$stat)`.
+
+Perform stratified cross-validation of DAPC using a range of retained PCs, while keeping the number of discriminant functions fixed for K = 2 - 5 to determine the most appropriate number of principle components to retain sufficient variance to discriminate but not overfit the data.
+
+```{r cache=TRUE}
+
+## define minimum and maximum K to cluster for ----
+min_K <- 2
+
+max_K <- 5
+
+# number of repetitions for x-validation
+n_rep <- 30
+
+# range of values to loop over
+range <- min_K:max_K
+
+## loop over values for K ----
+
+# list for cross validation plots
+xVal_plots <- list()
+
+# data frame for optimum PCs
+opt_PC <- data.frame(matrix(ncol = 4, nrow = 0)) %>%
+    rename(k_clust = X1,
+           optPC = X2,
+           variance = X3,
+           mean_opt_success = X4)
+
+# list for membership plots
+memb_plots <- list()
+
+
+# run loop
+for (k in range){
+
+    # set value for K
+    k_clust <- k
+
+    # cluster
+    grp <- find.clusters.genind(gen_o, n.pca = 500, n.clust = k_clust, method = "kmeans")
+
+    # scale allele frq/missing data replaced with mean
+    X <- scaleGen(gen_o, NA.method = "mean")
+
+    xval <- xvalDapc(X, grp$grp,
+                     n.pca.max = 400, training.set = 0.9,
+                     result = "groupMean", center = TRUE, scale = FALSE,
+                     n.pca = NULL, n.rep = n_rep, xval.plot = FALSE)
+
+    # extract assignment success for each xVal step
+    PCs <- data.frame(N_PCs = xval[["Cross-Validation Results"]]$n.pca,
+                      PROP_SUCCESS = xval[["Cross-Validation Results"]]$success)
+
+    # create crossvalidation plot
+    xVal_plots[[k_clust]] <- ggplot(PCs, aes(x = N_PCs, y = PROP_SUCCESS)) +
+      stat_density2d(aes(fill = ..density..^0.25),
+                     geom = "tile", contour = FALSE, n = 200) +   
+      geom_point() +
+      scale_fill_continuous(low = "white", high = "dodgerblue4") +
+      scale_y_continuous(limits = c(0, 1)) +
+      labs(title = glue("Cross validation K = {k_clust}"),
+           x = "retained PCs", y = "assignment success") +
+      theme_standard +
+      theme(legend.position = "none")
+
+
+    # optimum number of PCs to retain
+    retain <- as.numeric(xval$`Number of PCs Achieving Highest Mean Success`)
+
+    variance <- round(xval[["DAPC"]]$var*100, digits = 2)
+
+    opt <- PCs %>%
+      filter(N_PCs == retain)
+
+    df <- as.data.frame(x = k_clust) %>%
+      mutate(optPC = retain,
+             variance = variance,
+             mean_opt_success = round(mean(opt$PROP_SUCCESS), digits = 2))
+
+    opt_PC <- opt_PC %>%
+        bind_rows(df)
+
+    # extract membership assignment probabilities
+    grp_membership <- as.data.frame(xval[["DAPC"]]$posterior) %>%
+      rownames_to_column("LIB_ID") %>%
+      gather(key = GRP, value = MEMBSHIP, 2:(k_clust+1)) %>%
+      left_join(strata) %>%
+      arrange(POP, LIB_ID) %>%
+      mutate(LIB_ID = factor(LIB_ID, levels = unique(LIB_ID)))
+
+    path <- as.character(glue("results/runs_K{k}.outl.grp.membership"))
+
+    write_delim(grp_membership, path, delim = "\t")
+
+    # create membership plot
+    memb_plots[[k_clust]] <- ggplot(grp_membership,
+                                    aes(x = LIB_ID, y = MEMBSHIP, fill = GRP, color = GRP)) +
+      geom_bar(stat = "identity") +
+      facet_grid(. ~ POP, scales = "free", space = "free") +
+      scale_fill_viridis_d() +
+      scale_color_viridis_d()+
+      labs(x = "INDV", y = "memb. prob") +
+      theme_standard +
+      theme(axis.text.x = element_blank(),
+        strip.text.x = element_text(size = 6, color = "black"),
+        strip.text.y = element_text(size = 6, color = "black"))
+
+}
+
+write_delim(opt_PC, "results/kmeans_outl-loci.optPCs", delim = "\t")
+
+```
+
+Retaining too few PCs may result in important variance not being retained and therefore not informing the clustering analysis, while retaining too many PCs results in overfitting, i.e. assignment success decreases.
+
+```{r fig.cap="Fig 2: Proportion of test individuals correctly assigned to their cluster of origin based on number of retained PCs for K = 2 - 9.", fig.height=10, fig.width=10}
+
+multiplot(xVal_plots[[2]], xVal_plots[[3]], xVal_plots[[4]], xVal_plots[[5]], cols = 2)
+
+kable(
+    opt_PC %>%
+        arrange(desc(mean_opt_success)),
+    caption = "The optimum number of principle components, %-variance retained and the mean optimum assignment succes for K = 2 - 10 clusters."
+    )
+
+```
+
+Genetic data is scaled and centered, then transformed using a PCA. Retained PCs are then transmitted to a linear discriminant analysis.
+
+Calculate membership probability of each individual to per cluster.
+
+```{r fig.cap="Fig 3: Membership probability of each individual to clusters identified using k-means hierarchical clustering.", fig.height=10, fig.width=10}
+
+multiplot(memb_plots[[2]], memb_plots[[3]], memb_plots[[4]], memb_plots[[5]], cols = 1)
+
+```
+
+Individuals are grouped within sample locations in individuals panels as `r knitr::combine_words(unique(grp_membership$POP))`.
+
+
+## Neutral loci (Fst-outlier & environmentally-associated loci removed)
+
+Use k-means clustering to identify clusters based on genetic similarity (data transformed using PCA). For clustering it is appropriate to retain all PCs (all variance in the data set), as overfitting is not an issue.
+
+```{r fig.cap="Fig 1: AIC for data clustered into K = 1 - 40 groups using k-means clustering.", fig.height=4, fig.width=7}
+
+# k-means clustering
+grp_AIC <- find.clusters.genind(gen_nn, n.pca = 500, method = "kmeans",
+                            stat = "AIC", choose.n.clust = FALSE, criterion = "min",
+                            max.n.clust = 10)
+
+
+Kstat <- as.data.frame(grp_AIC$Kstat) %>%
+  rownames_to_column("K") %>%
+  separate(K, c("temp", "K"), sep = "=") %>%
+  mutate(K = as.numeric(K)) %>%
+  rename(AIC = `grp_AIC$Kstat`) %>%
+  select(K, AIC)
+
+ggplot(Kstat, aes(x = K, y = AIC)) +
+  geom_line() +
+  geom_point(shape = 21, color = "black", fill = "darkorange", size = 3) +
+  labs(x = "number of clusters K", y = "AIC") +
+  theme_standard
+
+```
+
+Minimum value for AIC is obtained for `r names(grp_AIC$stat)`.
+
+Perform stratified cross-validation of DAPC using a range of retained PCs, while keeping the number of discriminant functions fixed for K = 2 - 5 to determine the most appropriate number of principle components to retain sufficient variance to discriminate but not overfit the data.
+
+```{r cache=TRUE}
+
+## define minimum and maximum K to cluster for ----
+min_K <- 2
+
+max_K <- 5
+
+# number of repetitions for x-validation
+n_rep <- 30
+
+# range of values to loop over
+range <- min_K:max_K
+
+## loop over values for K ----
+
+# list for cross validation plots
+xVal_plots <- list()
+
+# data frame for optimum PCs
+opt_PC <- data.frame(matrix(ncol = 4, nrow = 0)) %>%
+    rename(k_clust = X1,
+           optPC = X2,
+           variance = X3,
+           mean_opt_success = X4)
+
+# list for membership plots
+memb_plots <- list()
+
+
+# run loop
+for (k in range){
+
+    # set value for K
+    k_clust <- k
+
+    # cluster
+    grp <- find.clusters.genind(gen_nn, n.pca = 500, n.clust = k_clust, method = "kmeans")
+
+    # scale allele frq/missing data replaced with mean
+    X <- scaleGen(gen_nn, NA.method = "mean")
+
+    xval <- xvalDapc(X, grp$grp,
+                     n.pca.max = 400, training.set = 0.9,
+                     result = "groupMean", center = TRUE, scale = FALSE,
+                     n.pca = NULL, n.rep = n_rep, xval.plot = FALSE)
+
+    # extract assignment success for each xVal step
+    PCs <- data.frame(N_PCs = xval[["Cross-Validation Results"]]$n.pca,
+                      PROP_SUCCESS = xval[["Cross-Validation Results"]]$success)
+
+    # create crossvalidation plot
+    xVal_plots[[k_clust]] <- ggplot(PCs, aes(x = N_PCs, y = PROP_SUCCESS)) +
+      stat_density2d(aes(fill = ..density..^0.25),
+                     geom = "tile", contour = FALSE, n = 200) +   
+      geom_point() +
+      scale_fill_continuous(low = "white", high = "dodgerblue4") +
+      scale_y_continuous(limits = c(0, 1)) +
+      labs(title = glue("Cross validation K = {k_clust}"),
+           x = "retained PCs", y = "assignment success") +
+      theme_standard +
+      theme(legend.position = "none")
+
+
+    # optimum number of PCs to retain
+    retain <- as.numeric(xval$`Number of PCs Achieving Highest Mean Success`)
+
+    variance <- round(xval[["DAPC"]]$var*100, digits = 2)
+
+    opt <- PCs %>%
+      filter(N_PCs == retain)
+
+    df <- as.data.frame(x = k_clust) %>%
+      mutate(optPC = retain,
+             variance = variance,
+             mean_opt_success = round(mean(opt$PROP_SUCCESS), digits = 2))
+
+    opt_PC <- opt_PC %>%
+        bind_rows(df)
+
+    # extract membership assignment probabilities
+    grp_membership <- as.data.frame(xval[["DAPC"]]$posterior) %>%
+      rownames_to_column("LIB_ID") %>%
+      gather(key = GRP, value = MEMBSHIP, 2:(k_clust+1)) %>%
+      left_join(strata) %>%
+      arrange(POP, LIB_ID) %>%
+      mutate(LIB_ID = factor(LIB_ID, levels = unique(LIB_ID)))
+
+    path <- as.character(glue("results/runs_K{k}.neut.grp.membership"))
+
+    write_delim(grp_membership, path, delim = "\t")
+
+    # create membership plot
+    memb_plots[[k_clust]] <- ggplot(grp_membership,
+                                    aes(x = LIB_ID, y = MEMBSHIP, fill = GRP, color = GRP)) +
+      geom_bar(stat = "identity") +
+      facet_grid(. ~ POP, scales = "free", space = "free") +
+      scale_fill_viridis_d() +
+      scale_color_viridis_d()+
+      labs(x = "INDV", y = "memb. prob") +
+      theme_standard +
+      theme(axis.text.x = element_blank(),
+        strip.text.x = element_text(size = 6, color = "black"),
+        strip.text.y = element_text(size = 6, color = "black"))
+
+}
+
+write_delim(opt_PC, "results/kmeans_neut-loci.optPCs", delim = "\t")
+
+```
+
+Retaining too few PCs may result in important variance not being retained and therefore not informing the clustering analysis, while retaining too many PCs results in overfitting, i.e. assignment success decreases.
+
+```{r fig.cap="Fig 2: Proportion of test individuals correctly assigned to their cluster of origin based on number of retained PCs for K = 2 - 9.", fig.height=10, fig.width=10}
+
+multiplot(xVal_plots[[2]], xVal_plots[[3]], xVal_plots[[4]], xVal_plots[[5]], cols = 2)
+
+kable(
+    opt_PC %>%
+        arrange(desc(mean_opt_success)),
+    caption = "The optimum number of principle components, %-variance retained and the mean optimum assignment succes for K = 2 - 10 clusters."
+    )
+
+```
+
+Genetic data is scaled and centered, then transformed using a PCA. Retained PCs are then transmitted to a linear discriminant analysis.
+
+Calculate membership probability of each individual to per cluster.
+
+```{r fig.cap="Fig 3: Membership probability of each individual to clusters identified using k-means hierarchical clustering.", fig.height=10, fig.width=10}
+
+multiplot(memb_plots[[2]], memb_plots[[3]], memb_plots[[4]], memb_plots[[5]], cols = 1)
+
+```
+
+Individuals are grouped within sample locations in individuals panels as `r knitr::combine_words(unique(grp_membership$POP))`.
+
+
+# Fst
+
+## AMOVA
+
+Implemented in Arlequin
+
+## Pairwise Fst
+
+Pairwise FST [@Weir1984] was calculated as a post hoc test for significant differences between oceans, among geographic regions, and estuaries. Significance determined using permuted p-values (1,000 iterations) and 95% confidence intervals around each estimate generated by resampling loci 10,000 times with replacement using functions implemented in `hierfstat` and `assigner`.
+
+**PAIRWISE COMPARISON BETWEEN OCEAN BASINS**
+
+```{r}
+
+# # PAIRWISE FST OCEANS ----
+# 
+# # set groups to compare ====
+# setPop(gen) <- ~OCEAN
+# 
+# pop <- popNames(gen)
+# 
+# # number of groups being compared
+# n <- length(pop)
+# 
+# # calculate pairwise Fst & CIs ====
+# tidy <- tidy_genomic_data(data = gen, filename = NULL, parallel = 10)
+# 
+# fst <- assigner::fst_WC84(data = tidy, 
+#                           pop.levels = pop,
+#                           holdout.samples = NULL,
+#                           pairwise = TRUE,
+#                           ci = TRUE, 
+#                           iteration.ci = 10000,
+#                           quantiles.ci = c(0.025, 0.975), 
+#                           digits = 9,
+#                           verbose = TRUE,
+#                           parallel.core = 55)
+# 
+# # write results
+# df <- fst$pairwise.fst
+# 
+# write_delim(df, "results/ocean_allLoc.fst.ci", delim = "\t")
+# 
+# 
+# # compute Fst matrix ====
+# 
+# dat <- genind2hierfstat(gen)
+# mat.obs <- pairwise.WCfst(dat)
+# 
+# temp <- as.data.frame(mat.obs) %>%
+#   rownames_to_column("GRP1") %>%
+#   gather(key = "GRP2", value = "obsFst", 2:(n+1)) %>%
+#   filter(GRP1 != GRP2)
+# 
+# write_delim(temp, "results/ocean_allLoc.fst.WC84", delim = "\t")
+# 
+# # calculate pairwise Fst for individuals permuted between groups ====
+# 
+# # create list with NPERM matrices of permuted Fst values
+# NBPERM <- 1000
+# 
+# # permute individuals between groups for each pairwise comparison
+# mat.perm <- mclapply(1:NBPERM, function(i) pairwise.WCfst(mutate(dat, pop = sample(pop, replace = FALSE))), mc.cores = 55)
+# 
+# # create data frame with permuted values
+# fst_perm <- list()
+# 
+# for(i in 1:length(mat.perm)){
+# 
+# fst <- as.data.frame(mat.perm[[i]]) %>%
+#   rownames_to_column("GRP1") %>%
+#   gather(key = "GRP2", value = "ppFST", 2:(n+1)) %>%
+#   filter(GRP1 != GRP2)
+# 
+# fst_perm[[i]] <- fst
+# 
+# }
+# 
+# fst_perm <- ldply(fst_perm, data.frame)
+# 
+# write_delim(fst_perm, "results/ocean_allLoc.fst.perm", delim = "\t")
+# 
+# # get p-values for each pairwise comparison ====
+# 
+# # use randtest to determine p-value (i.e. is observed value different from permuted values)
+# # p.globs.p<-sum(gglobs.p>=gglobs.p[nperm+1])/(nperm+1)  p-val is sum(times observed value is > permuted value / total permutations)
+# 
+# ppfst_pval <- list()
+# 
+# for(i in 1:(nrow(mat.obs)-1)){
+# 
+#  for(j in 2:nrow(mat.obs)){
+# 
+#    ppfst_pval[[paste(rownames(mat.obs)[i], rownames(mat.obs)[j], sep = "-")]] <- as.randtest(na.omit(sapply(1:NBPERM, function(k) mat.perm[[k]][i,j])), mat.obs[i,j], alter = "greater")
+# 
+#    }
+# 
+# }
+# 
+# # create data frame with p-values
+# COMP <- names(ppfst_pval)
+# 
+# PVAL <- rep(NA, length(ppfst_pval))
+# 
+# for (i in 1:length(PVAL)) {
+# 
+#   PVAL[i] <- ppfst_pval[[i]]$pvalue
+# 
+# }
+# 
+# pval <- data.frame(COMP, PVAL)
+# 
+# write_delim(pval, "results/ocean_allLoc.fst.pval", delim = "\t")
+
+
+# COMPARE RESULTS ----
+
+tmp <- read_delim("results/ocean_allLoc.fst.ci", delim = "\t") %>%
+  unite(COMP, POP1, POP2, sep = "-", remove = FALSE)
+
+kable(
+read_delim("results/ocean_allLoc.fst.pval", delim = "\t") %>%
+  left_join(tmp) %>%
+  select(POP1, POP2, N_MARKERS, FST, CI_LOW, CI_HIGH, PVAL) %>%
+  arrange(POP1),
+caption = "Pairwise Fst among ocean basins.")
+
+```
+
+Atlantic and Gulf samples are significantly different from each other.
+
+**PAIRWISE COMPARISONS AMONG GEOGRAPHIC REGIONS**
+
+```{r fig.cap="Pairwise Fst among geographic regions. P-values and 95%-CI recored in table.", fig.height=6, fig.width=9}
+
+# # PAIRWISE FST REGIONS ----
+# 
+# # set groups to compare ====
+# setPop(gen) <- ~REGION
+# 
+# pop <- popNames(gen)
+# 
+# # number of groups to compare
+# n <- length(pop)
+# 
+# 
+# # pairwise Fst and CIs ====
+# tidy <- tidy_genomic_data(data = gen, filename = NULL, parallel = 10)
+# 
+# fst <- assigner::fst_WC84(data = tidy, 
+#                           pop.levels = pop,
+#                           holdout.samples = NULL,
+#                           pairwise = TRUE,
+#                           ci = TRUE, 
+#                           iteration.ci = 10000,
+#                           quantiles.ci = c(0.025, 0.975), 
+#                           digits = 9,
+#                           verbose = TRUE,
+#                           parallel.core = 55)
+# 
+# df <- fst$pairwise.fst
+# 
+# write_delim(df, "results/region_allLoc.fst.ci", delim = "\t")
+# 
+# 
+# # compute Fst matrix ====
+# dat <- genind2hierfstat(gen)
+# mat.obs <- pairwise.WCfst(dat)
+# 
+# temp <- as.data.frame(mat.obs) %>%
+#   rownames_to_column("GRP1") %>%
+#   gather(key = "GRP2", value = "obsFst", 2:(n+1)) %>%
+#   filter(GRP1 != GRP2)
+# 
+# write_delim(temp, "results/region_allLoc.fst", delim = "\t")
+# 
+# # calculate pairwise Fst for individuals permuted between groups ====
+# 
+# # create list with NPERM matrices of permuted Fst values
+# NBPERM <- 1000
+# 
+# # permute individuals between groups for each pairwise comparison
+# mat.perm <- mclapply(1:NBPERM, function(i) pairwise.WCfst(mutate(dat, pop = sample(pop, replace = FALSE))), mc.cores = 55)
+# 
+# # create data frame with permuted values
+# fst_perm <- list()
+# 
+# for(i in 1:length(mat.perm)){
+# 
+# fst <- as.data.frame(mat.perm[[i]]) %>%
+#   rownames_to_column("GRP1") %>%
+#   gather(key = "GRP2", value = "ppFST", 2:(n+1)) %>%
+#   filter(GRP1 != GRP2)
+# 
+# fst_perm[[i]] <- fst
+# 
+# }
+# 
+# fst_perm <- ldply(fst_perm, data.frame)
+# 
+# write_delim(fst_perm, "results/region_allLoc.fst.perm", delim = "\t")
+# 
+# # get p-values for each pairwise comparison ====
+# 
+# # use randtest to determine p-value (i.e. is observed value different from permuted values)
+# # p.globs.p<-sum(gglobs.p>=gglobs.p[nperm+1])/(nperm+1)  p-val is sum(times observed value is > permuted value / total permutations)
+# 
+# ppfst_pval <- list()
+# 
+# for(i in 1:(nrow(mat.obs)-1)){
+# 
+#  for(j in 2:nrow(mat.obs)){
+# 
+#    ppfst_pval[[paste(rownames(mat.obs)[i], rownames(mat.obs)[j], sep = "-")]] <- as.randtest(na.omit(sapply(1:NBPERM, function(k) mat.perm[[k]][i,j])), mat.obs[i,j], alter = "greater")
+# 
+#    }
+# 
+# }
+# 
+# # create data frame with p-values
+# COMP <- names(ppfst_pval)
+# 
+# PVAL <- rep(NA, length(ppfst_pval))
+# 
+# for (i in 1:length(PVAL)) {
+# 
+#   PVAL[i] <- ppfst_pval[[i]]$pvalue
+# 
+# }
+# 
+# pval <- data.frame(COMP, PVAL)
+# 
+# write_delim(pval, "results/region_allLoc.fst.pval", delim = "\t")
+
+# COMPARE RESULTS ----
+
+# make heatmap
+fst <- read_delim("results/region_allLoc.fst", delim = "\t") %>%
+  unite(COMP, GRP1, GRP2, sep = "-", remove = FALSE) %>%
+  mutate(GRP1 = ordered(GRP1, levels = reg),
+         GRP2 = ordered(GRP2, levels = reg))
+
+ggplot(fst, aes(x = GRP1, y = GRP2, fill = obsFst)) +
+  geom_tile() +
+  geom_text(aes(label = round(obsFst, 4))) +
+  scale_fill_viridis_c()
+
+# print table
+tmp <- read_delim("results/region_allLoc.fst.ci", delim = "\t") %>%
+  unite(COMP, POP1, POP2, sep = "-", remove = FALSE)
+
+kable(
+  read_delim("results/region_allLoc.fst.pval", delim = "\t") %>%
+  left_join(tmp) %>%
+  select(POP1, POP2, N_MARKERS, FST, CI_LOW, CI_HIGH, PVAL) %>%
+  filter(!is.na(POP1)) %>%
+  arrange(desc(CI_LOW)))
+
+```
+
+With the exception of the central and western Gulf, all geographic regions are significantly different from each other.
+
+**PAIRWISE COMPARISONS AMONG SAMPLE LOCATIONS**
+
+````{r fig.cap="Pairwise Fst among sample locations. P-values and 95%-CI recored in table.", fig.height=6, fig.width=9}
+
+# # PAIRWISE FST ESTUARIES ----
+# 
+# # set groups to compare ====
+# setPop(gen) <- ~POP
+# 
+# pop <- popNames(gen)
+# 
+# # number of groups to compare
+# n <- length(pop)
+# 
+# 
+# # pairwise Fst and CIs ====
+# tidy <- tidy_genomic_data(data = temp, filename = NULL, parallel = 20)
+# 
+# fst <- assigner::fst_WC84(data = tidy, 
+#                           pop.levels = pop,
+#                           holdout.samples = NULL,
+#                           pairwise = TRUE,
+#                           ci = TRUE, 
+#                           iteration.ci = 10000,
+#                           quantiles.ci = c(0.025, 0.975), 
+#                           digits = 9,
+#                           verbose = TRUE,
+#                           parallel.core = 50)
+# # pairwise fst
+# df <- fst$pairwise.fst
+# 
+# write_delim(df, "results/estuaries_allLoc.fst.ci", delim = "\t")
+# 
+# 
+# # compute Fst matrix ====
+# dat <- genind2hierfstat(gen)
+# mat.obs <- pairwise.WCfst(dat)
+# 
+# gen <- as.data.frame(mat.obs) %>%
+#   rownames_to_column("GRP1") %>%
+#   gather(key = "GRP2", value = "obsFst", 2:(n+1)) %>%
+#   filter(GRP1 != GRP2)
+# 
+# write_delim(gen, "results/estuary_allLoc.fst.WC84", delim = "\t")
+# 
+# 
+# # calculate pairwise Fst for individuals permuted between groups ====
+# 
+# # create list with NPERM matrices of permuted Fst values
+# NBPERM <- 1000
+# 
+# # permute individuals between groups for each pairwise comparison
+# mat.perm <- mclapply(1:NBPERM, function(i) pairwise.WCfst(mutate(dat, pop = sample(pop, replace = FALSE))), mc.cores = 55)
+# 
+# # create data frame with permuted values
+# fst_perm <- list()
+# 
+# for(i in 1:length(mat.perm)){
+# 
+# fst <- as.data.frame(mat.perm[[i]]) %>%
+#   rownames_to_column("GRP1") %>%
+#   gather(key = "GRP2", value = "ppFST", 2:(n+1)) %>%
+#   filter(GRP1 != GRP2)
+# 
+# fst_perm[[i]] <- fst
+# 
+# }
+# 
+# fst_perm <- ldply(fst_perm, data.frame)
+# 
+# write_delim(fst_perm, "results/estuary_allLoc.fst.perm", delim = "\t")
+# 
+# # get p-values for each pairwise comparison ====
+# 
+# # use randtest to determine p-value (i.e. is observed value different from permuted values)
+# # p-val is sum(times observed value is > permuted value / total permutations)
+# 
+# ppfst_pval <- list()
+# 
+# for(i in 1:(nrow(mat.obs)-1)){
+# 
+#  for(j in 2:nrow(mat.obs)){
+# 
+#    ppfst_pval[[paste(rownames(mat.obs)[i], rownames(mat.obs)[j], sep = "-")]] <- as.randtest(na.omit(sapply(1:NBPERM, function(k) mat.perm[[k]][i,j])), mat.obs[i,j], alter = "greater")
+# 
+#    }
+# 
+# }
+# 
+# # create data frame with p-values
+# COMP <- names(ppfst_pval)
+# 
+# PVAL <- rep(NA, length(ppfst_pval))
+# 
+# for (i in 1:length(PVAL)) {
+# 
+#   PVAL[i] <- ppfst_pval[[i]]$pvalue
+# 
+# }
+# 
+# pval <- data.frame(COMP, PVAL)
+# 
+# write_delim(pval, "results/estuary_allLoc.fst.pval", delim = "\t")
+
+
+# COMPARE RESULTS ----
+
+# make heatmap
+fst <- read_delim("results/estuary_allLoc.fst.WC84", delim = "\t") %>%
+  mutate(GRP1 = ordered(GRP1, levels = pops),
+         GRP2 = ordered(GRP2, levels = pops))
+
+ggplot(fst, aes(x = GRP1, y = GRP2, fill = obsFst)) +
+  geom_tile() +
+  geom_text(aes(label = round(obsFst, 4))) +
+  scale_fill_viridis_c()
+
+# print table
+tmp <- read_delim("results/estuaries_allLoc.fst.ci", delim = "\t") %>%
+  unite(COMP, POP1, POP2, sep = "-", remove = FALSE)
+
+kable(
+  read_delim("results/estuary_allLoc.fst.pval", delim = "\t") %>%
+  left_join(tmp) %>%
+  select(POP1, POP2, N_MARKERS, FST, CI_LOW, CI_HIGH, PVAL) %>%
+  filter(!is.na(POP1)) %>%
+  arrange(desc(CI_LOW)))
+
+```
+
+The Campeche and Atlantic sample location exhibit the strongest differentiation, followed by all other Atlantic-Gulf comparisons. All pairwise comparisons of locations in the northern Gulf are significantly different from the southern Gulf sample location. Within the northern Gulf, the northern and southern Florida samples are significantly different from sample locations in the central and western sample location but are not different from each other (within eastern Gulf region), similarly most pairwise comparisons among sample locations within the central and western Gulf regions are not significantly different from each other.
+
+
+# Comparison of genetic diversity all loci
+
+## Calculate measures of diversity
+
+Calculate measures of genetic diversity based on allele frequencies.
+
+```{r eval=FALSE, echo=TRUE}
+
+# define groups to analyze ====
+setPop(gen) <- ~OCEAN
+
+gen_oce <- seppop(gen)
+
+setPop(gen) <- ~REGION
+
+gen_reg <- seppop(gen)
+
+setPop(gen) <- ~POP
+
+gen_pop <- seppop(gen)
+
+gen_grp <- c(gen_oce, gen_reg, gen_pop)
+
+gen_grp[["ALL"]] <- gen
+
+# calculate diversity stats ====
+loc_stats <- list()
+
+for (p in names(gen_grp)) {
+  
+locA <- locus_table(gen_grp[[p]], index = "shannon") %>%
+  as.data.frame() %>%
+  rownames_to_column("LOCUS")
+
+locB <- locus_table(gen_grp[[p]], index = "simpson") %>%
+  as.data.frame() %>%
+  rownames_to_column("LOCUS")
+
+temp <- left_join(locA, locB)
+
+locC <- locus_table(gen_grp[[p]], index = "invsimpson") %>%
+  as.data.frame() %>%
+  rownames_to_column("LOCUS")
+
+loc_stats[[p]] <- left_join(temp, locC)
+  
+}
+
+loc_stats <- ldply(loc_stats, data.frame) %>%
+  select(-Hexp) %>%
+  rename(GRP = `.id`,
+         SIMPSON_IDX = `X1.D`,
+         N_ALLELES = allele,
+         SHANNON_IDX = H,
+         STODD_TAYLOR_IDX = G,
+         EVENNESS = Evenness)
+
+# calculate genetic diversity stats (heterozygosity-based) ====
+loc_stats_2 <- list()
+
+for (p in names(gen_grp)) {
+  
+dat <- genind2hierfstat(gen_grp[[p]])
+stats <- basic.stats(dat)
+
+loc_stats_2[[p]] <- stats$perloc %>%
+  rownames_to_column("LOCUS")
+
+}
+
+# combine into single data frame ====
+loc_stats_2 <- ldply(loc_stats_2, data.frame) %>%
+  rename(GRP = `.id`)
+
+loc_stats <- left_join(loc_stats, loc_stats_2) %>%
+  select(GRP, LOCUS, N_ALLELES, EVENNESS, Ho, Hs, Ht, Fis, SHANNON_IDX, SIMPSON_IDX, STODD_TAYLOR_IDX)
+
+loc_stats[is.na(loc_stats)] <- NA
+
+write_delim(loc_stats, "results/gendiv.locstats", delim = "\t")
+
+```
+
+
+## Expected heterozygosity (Nei's gene diversity).
+
+*Hs* calculated as within population gene diversity (expected heterozygosity) according to [@Nei1987].
+
+```{r fig.cap="Distribution of expected heterozygosity per estuary", fig.height=5, fig.width=8}
+
+het <- read_delim("results/gendiv.locstats", delim = "\t") %>%
+  select(GRP, LOCUS, Hs) %>%
+  filter(GRP %in% pops) %>%
+  mutate(GRP = ordered(GRP, levels = pops),
+         REGION = case_when(GRP %in% c("FLA") ~ "SWATL",
+                            GRP %in% c("CAMP") ~ "SGULF",
+                            GRP %in% c("FLGS", "FLGN") ~ "EGULF",
+                            GRP %in% c("MB", "MISS", "CS", "LA") ~ "CGULF",
+                            GRP %in% c("CC") ~ "WGULF"),
+         REGION = ordered(REGION, reg))
+
+ggplot(het, aes(x = GRP, y = Hs, color = REGION)) +
+  geom_boxplot() +
+  scale_color_manual(values = col_regs) +
+  coord_flip() +
+  labs(x = "", y = "expected heterozygosity") +
+  theme_standard +
+  theme(axis.text.x = element_text(angle = -90, hjust = 1))
+
+
+kable(
+  het %>%
+    group_by(GRP) %>%
+    summarize(median = median(Hs, na.rm = TRUE),
+              mean = mean(Hs, na.rm = TRUE),
+              std = sd(Hs, na.rm = TRUE)),
+  digits = 4,
+  caption = "Median, mean +/- std gene diversity by sample location."
+)
+
+kable(
+  het %>%
+    group_by(REGION) %>%
+    summarize(median = median(Hs, na.rm = TRUE),
+              mean = mean(Hs, na.rm = TRUE),
+              std = sd(Hs, na.rm = TRUE)),
+  digits = 4,
+  caption = "Median, mean +/- std gene diversity by region."
+)
+
+
+```
+
+Test for significant differences among estuaries using Friedman's test.
+
+```{r}
+
+# remove loci with Na values
+rm <- read_delim("results/gendiv.locstats", delim = "\t") %>%
+  select(GRP, LOCUS, Hs) %>%
+  filter(GRP %in% pops) %>%
+  mutate(GRP = ordered(GRP, levels = pops)) %>%
+  filter(is.na(Hs))
+
+temp <- het %>%
+  filter(!LOCUS %in% rm$LOCUS)
+
+friedman.test(Hs ~ GRP | LOCUS, data = temp)
+
+```
+
+Test for significant pairwise differences between estuaries using Wilcoxon signed rank test.
+
+```{r fig.cap="Results pairwise comparisons using Wilcoxon signed rank test (p-value printed).", fig.height=7, fig.width=7}
+
+het <- read_delim("results/gendiv.locstats", delim = "\t") %>%
+  select(GRP, LOCUS, Hs) %>%
+  filter(GRP %in% pops) %>%
+  mutate(GRP = ordered(GRP, levels = pops))
+
+# remove loci with Na values
+rm <- het %>%
+  filter(is.na(Hs))
+
+het <- het %>%
+  filter(!LOCUS %in% rm$LOCUS)
+
+# groups to compare
+comp <- as.character(unique(het$GRP))
+
+# pairs of comparisons
+# pairs <- combn(comp, 2, simplify = FALSE)
+
+pairs <- expand.grid(comp, comp) %>%
+  filter(!Var1 == Var2) %>%
+  rownames_to_column("PAIR") %>%
+  split(.$PAIR) %>%
+  purrr::map(function(x){
+    x %>%
+      select(-PAIR) %>%
+      gather(key = temp, value = GRP, 1:2) %>%
+      select(-temp)
+  })
+
+# empty data frame for results
+results <- data.frame(pop1 = character(),
+                      pop2 = character(),
+                      stat = numeric(),
+                      p.value = numeric())
+
+n <- as.numeric(length(pairs))
+
+# loop over pairs
+for(i in 1:length(pairs)){
+  
+  p <- i
+  
+  pair <- pairs[[p]]$GRP
+  
+  temp <- het %>%
+    filter(GRP %in% pair) %>%
+    mutate(GRP = ordered(GRP, levels = pair),
+         LOCUS = as.factor(LOCUS)) %>%
+  droplevels()
+  
+  wilcox <- wilcoxsign_test(Hs ~ GRP | LOCUS, 
+                data = temp,
+                zero.method = "Pratt")
+  
+  df <- data.frame("pop1" = pair[1], 
+                   "pop2" = pair[2], 
+                   "stat" = as.numeric(wilcox@statistic@teststatistic), 
+                   "p-value" = as.numeric(pvalue(wilcox)))
+  
+  results <- bind_rows(results, df)
+  
+}
+
+results <- results %>%
+  mutate(pop1 = ordered(pop1, levels = pops),
+         pop2 = ordered(pop2, levels = pops))
+
+write_delim(results, "results/exphet_est.wilcox")
+
+tmp <- results %>%
+  select(-`p.value`) %>%
+  pivot_wider(names_from = "pop2", values_from = "stat")
+
+write_delim(tmp, "results/exphet_est_matrix.wilcox")
+
+tmp <- results %>%
+  select(-stat) %>%
+  pivot_wider(names_from = "pop2", values_from = "p.value")
+
+write_delim(tmp, "results/exphet_est_matrix.pval.wilcox")
+  
+ggplot(results, aes(x = pop1, y = pop2, fill = stat)) +
+  geom_tile(color = "black") +
+  geom_text(aes(label = round(p.value, 2))) +
+  scale_fill_viridis_c() +
+  coord_fixed(ratio = 1) +
+  labs(x = "", y = "") +
+  theme_standard +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+
+```
+
+
+## Allelic richness
+
+Calculate allelic richness corrected for sample size using rarefaction.
+
+```{r eval=FALSE}
+
+# by estuary
+setPop(gen) <- ~POP
+
+dat <- genind2hierfstat(gen)
+
+df <- allelic.richness(dat,
+                       diploid = TRUE)
+
+df <- as.data.frame(df$Ar) %>%
+  rownames_to_column("LOCUS")
+
+write_delim(df, "results/estuaries_rarefied.allelecount", delim = "\t")
+
+```
+
+Compare levels rarefied allele counts among estuaries.
+
+```{r fig.cap="Distribution of allelic richness measured as rarefied allele counts per estuary", fig.height=5, fig.width=8}
+
+n <- length(pops)+1
+
+ar <- read_delim("results/estuaries_rarefied.allelecount", delim = "\t") %>%
+  gather(key = pop, value = AR, 2:n) %>%
+  mutate(pop = ordered(pop, levels = pops),
+         REGION = case_when(pop %in% c("FLA") ~ "SWATL",
+                            pop %in% c("CAMP") ~ "SGULF",
+                            pop %in% c("FLGS", "FLGN") ~ "EGULF",
+                            pop %in% c("MB", "MISS", "CS", "LA") ~ "CGULF",
+                            pop %in% c("CC") ~ "WGULF"),
+         REGION = ordered(REGION, levels = reg))
+
+ggplot(ar, aes(x = pop, y = AR, color = REGION)) +
+  geom_boxplot() +
+  scale_color_manual(values = col_regs) +
+  coord_flip() +
+  labs(x = "rarefied allele count (all)", y = "") +
+  theme_standard
+
+kable(
+  ar %>%
+    group_by(pop) %>%
+    summarize(median = median(AR),
+              mean = mean(AR),
+              std = sd(AR)),
+  digits = 4,
+  caption = "Median, mean +/- std rarefied allelic richness by sample location."
+)
+
+kable(
+  ar %>%
+    group_by(REGION) %>%
+    summarize(median = median(AR),
+              mean = mean(AR),
+              std = sd(AR)),
+  digits = 4,
+  caption = "Median, mean +/- std rarefied alllelic richness by region."
+)
+
+```
+
+Test for significant differences among estuaries using Friedman's test.
+
+```{r}
+
+friedman.test(AR ~ pop | LOCUS, data = ar)
+
+```
+
+Test for significant pairwise differences between estuaries using Wilcoxon signed rank test.
+
+```{r fig.cap="Results of pairwise comparison of allelic richness among estuaries using Wilcoxon signed rank test (p-value).", fig.height=7, fig.width=7}
+
+# groups to compare
+comp <- as.character(unique(ar$pop))
+
+# pairs of comparisons
+pairs <- expand.grid(comp, comp) %>%
+  filter(!Var1 == Var2) %>%
+  rownames_to_column("PAIR") %>%
+  split(.$PAIR) %>%
+  purrr::map(function(x){
+    x %>%
+      select(-PAIR) %>%
+      gather(key = temp, value = GRP, 1:2) %>%
+      select(-temp)
+  })
+
+# empty data frame for results
+results <- data.frame(pop1 = character(),
+                      pop2 = character(),
+                      stat = numeric(),
+                      p.value = numeric())
+
+n <- as.numeric(length(pairs))
+
+# loop over pairs
+for(i in 1:length(pairs)){
+  
+  p <- i
+  
+  pair <- pairs[[p]]$GRP
+  
+  temp <- ar %>%
+    filter(pop %in% pair) %>%
+    mutate(pop = ordered(pop, levels=pair),
+         LOCUS = as.factor(LOCUS)) %>%
+  droplevels()
+  
+  wilcox <- wilcoxsign_test(AR ~ pop | LOCUS, 
+                data = temp,
+                zero.method = "Pratt")
+  
+  df <- data.frame("pop1" = pair[1], 
+                   "pop2" = pair[2], 
+                   "stat" = as.numeric(wilcox@statistic@teststatistic), 
+                   "p-value" = as.numeric(pvalue(wilcox)))
+  
+  results <- bind_rows(results, df)
+  
+}
+
+
+results <- results %>%
+  mutate(pop1 = ordered(pop1, levels = pops),
+         pop2 = ordered(pop2, levels = pops))
+
+write_delim(results, "results/allelrich_est.wilcox")
+
+
+ggplot(results, aes(x = pop1, y = pop2, fill = stat)) +
+  geom_tile(color = "black") +
+  geom_text(aes(label = round(p.value, 2))) +
+  scale_fill_viridis_c() +
+  coord_fixed(ratio = 1) +
+  labs(x = "", y = "", title = "all loci") +
+  theme_standard +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+
+```
+
+
+## Evenness
+
+*Evenness* is calculated as the ratio of the number of abundant genotypes to the number of rarer genotypes calculated using the ratio of Stoddart & Tayolor index (diversity index weighted for more abundant alleles) & Shannon-Wiener index (diversity index weighted for more rare alleles).
+
+
+```{r fig.cap="Distribution of evenness of allelic diversity per estuary",fig.height=5, fig.width=8}
+
+even <- read_delim("results/gendiv.locstats", delim = "\t") %>%
+  select(GRP, LOCUS, EVENNESS) %>%
+  filter(GRP %in% pops) %>%
+  mutate(GRP = ordered(GRP, levels = pops),
+         REGION = case_when(GRP %in% c("FLA") ~ "SWATL",
+                            GRP %in% c("CAMP") ~ "SGULF",
+                            GRP %in% c("FLGS", "FLGN") ~ "EGULF",
+                            GRP %in% c("MB", "MISS", "CS", "LA") ~ "CGULF",
+                            GRP %in% c("CC") ~ "WGULF"),
+         REGION = ordered(REGION, levels = reg))
+
+ggplot(even, aes(x = GRP, y = EVENNESS, color = REGION)) +
+  geom_boxplot() +
+  scale_color_manual(values = col_regs) +
+  labs(x = "", y = "Evenness") +
+  coord_flip() +
+  theme_standard
+
+kable(
+  even %>%
+    group_by(GRP) %>%
+    summarize(median = median(EVENNESS, na.rm = TRUE),
+              mean = mean(EVENNESS, na.rm = TRUE),
+              std = sd(EVENNESS, na.rm = TRUE)),
+  digits = 4,
+  caption = "Median, mean +/- std evenness of allele frequencies by sample location."
+)
+
+kable(
+  even %>%
+    group_by(REGION) %>%
+    summarize(median = median(EVENNESS, na.rm = TRUE),
+              mean = mean(EVENNESS, na.rm = TRUE),
+              std = sd(EVENNESS, na.rm = TRUE)),
+  digits = 4,
+  caption = "Median, mean +/- std evenness of allele frequencies by region."
+)
+
+```
+
+Test for significant differences among estuaries using Friedman's test.
+
+```{r}
+
+# remove loci with Na values
+rm <- even %>%
+  filter(is.na(EVENNESS))
+
+temp <- even %>%
+  filter(!LOCUS %in% rm$LOCUS)
+
+friedman.test(EVENNESS ~ GRP | LOCUS, data = temp)
+
+```
+
+Test for significant pairwise differences between estuaries using Wilcoxon signed rank test.
+
+```{r fig.cap="Results of pairwise comparisons of evenness of allelic diversity between estuaries (p-values printed).", fig.height=7, fig.width=7}
+
+# remove loci with Na values
+rm <- even %>%
+  filter(is.na(EVENNESS))
+
+even <- even %>%
+  filter(!LOCUS %in% rm$LOCUS)
+
+# groups to compare
+comp <- as.character(unique(even$GRP))
+
+# pairs of comparisons
+pairs <- expand.grid(comp, comp) %>%
+  filter(!Var1 == Var2) %>%
+  rownames_to_column("PAIR") %>%
+  split(.$PAIR) %>%
+  purrr::map(function(x){
+    x %>%
+      select(-PAIR) %>%
+      gather(key = temp, value = GRP, 1:2) %>%
+      select(-temp)
+  })
+
+# empty data frame for results
+results <- data.frame(pop1 = character(),
+                      pop2 = character(),
+                      stat = numeric(),
+                      p.value = numeric())
+
+n <- as.numeric(length(pairs))
+
+# loop over pairs
+for(p in 1:n){
+  
+  pair <- pairs[[p]]$GRP
+  
+  temp <- even %>%
+    filter(GRP %in% pair) %>%
+    mutate(GRP = ordered(GRP, levels = pair),
+         LOCUS = as.factor(LOCUS)) %>%
+  droplevels()
+  
+  wilcox <- wilcoxsign_test(EVENNESS ~ GRP | LOCUS, 
+                data = temp,
+                zero.method = "Pratt")
+  
+  df <- data.frame("pop1" = pair[1], 
+                   "pop2" = pair[2], 
+                   "stat" = as.numeric(wilcox@statistic@teststatistic), 
+                   "p-value" = as.numeric(pvalue(wilcox)))
+  
+  results <- bind_rows(results, df)
+  
+}
+
+results <- results %>%
+  mutate(pop1 = ordered(pop1, levels = pops),
+         pop2 = ordered(pop2, levels = pops))
+
+write_delim(results, "results/evennes_est.wilcox", delim = "\t")
+
+ggplot(results, aes(x = pop1, y = pop2, fill = stat)) +
+  geom_tile(color = "black") +
+  geom_text(aes(label = round(p.value, 2))) +
+  scale_fill_viridis_c() +
+  coord_fixed(ratio = 1) +
+  labs(x = "", y = "") +
+  theme_standard +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+
+```
+
+
+# Comparison of genetic diversity outlier loci
+
+## Calculate measures of diversity
+
+Calculate measures of genetic diversity based on allele frequencies.
+
+```{r eval=FALSE, echo=TRUE}
+
+# define groups to analyze ====
+setPop(gen_o) <- ~OCEAN
+
+gen_oce <- seppop(gen_o)
+
+setPop(gen_o) <- ~REGION
+
+gen_reg <- seppop(gen_o)
+
+setPop(gen_o) <- ~POP
+
+gen_pop <- seppop(gen_o)
+
+gen_grp <- c(gen_oce, gen_reg, gen_pop)
+
+gen_grp[["ALL"]] <- gen_o
+
+# calculate diversity stats ====
+loc_stats <- list()
+
+for (p in names(gen_grp)) {
+  
+locA <- locus_table(gen_grp[[p]], index = "shannon") %>%
+  as.data.frame() %>%
+  rownames_to_column("LOCUS")
+
+locB <- locus_table(gen_grp[[p]], index = "simpson") %>%
+  as.data.frame() %>%
+  rownames_to_column("LOCUS")
+
+temp <- left_join(locA, locB)
+
+locC <- locus_table(gen_grp[[p]], index = "invsimpson") %>%
+  as.data.frame() %>%
+  rownames_to_column("LOCUS")
+
+loc_stats[[p]] <- left_join(temp, locC)
+  
+}
+
+loc_stats <- ldply(loc_stats, data.frame) %>%
+  select(-Hexp) %>%
+  rename(GRP = `.id`,
+         SIMPSON_IDX = `X1.D`,
+         N_ALLELES = allele,
+         SHANNON_IDX = H,
+         STODD_TAYLOR_IDX = G,
+         EVENNESS = Evenness)
+
+# calculate genetic diversity stats (heterozygosity-based) ====
+loc_stats_2 <- list()
+
+for (p in names(gen_grp)) {
+  
+dat <- genind2hierfstat(gen_grp[[p]])
+stats <- basic.stats(dat)
+
+loc_stats_2[[p]] <- stats$perloc %>%
+  rownames_to_column("LOCUS")
+
+}
+
+# combine into single data frame ====
+loc_stats_2 <- ldply(loc_stats_2, data.frame) %>%
+  rename(GRP = `.id`)
+
+loc_stats <- left_join(loc_stats, loc_stats_2) %>%
+  select(GRP, LOCUS, N_ALLELES, EVENNESS, Ho, Hs, Ht, Fis, SHANNON_IDX, SIMPSON_IDX, STODD_TAYLOR_IDX)
+
+loc_stats[is.na(loc_stats)] <- NA
+
+write_delim(loc_stats, "results/gendiv.o.locstats", delim = "\t")
+
+```
+
+
+## Expected heterozygosity (Nei's gene diversity).
+
+*Hs* calculated as within population gene diversity (expected heterozygosity) according to [@Nei1987].
+
+```{r fig.cap="Distribution of expected heterozygosity per estuary", fig.height=5, fig.width=8}
+
+het <- read_delim("results/gendiv.o.locstats", delim = "\t") %>%
+  select(GRP, LOCUS, Hs) %>%
+  filter(GRP %in% pops) %>%
+  mutate(GRP = ordered(GRP, levels = pops),
+         REGION = case_when(GRP %in% c("FLA") ~ "SWATL",
+                            GRP %in% c("CAMP") ~ "SGULF",
+                            GRP %in% c("FLGS", "FLGN") ~ "EGULF",
+                            GRP %in% c("MB", "MISS", "CS", "LA") ~ "CGULF",
+                            GRP %in% c("CC") ~ "WGULF"),
+         REGION = ordered(REGION, reg))
+
+ggplot(het, aes(x = GRP, y = Hs, color = REGION)) +
+  geom_boxplot() +
+  scale_color_manual(values = col_regs) +
+  coord_flip() +
+  labs(x = "", y = "expected heterozygosity") +
+  theme_standard +
+  theme(axis.text.x = element_text(angle = -90, hjust = 1))
+
+
+kable(
+  het %>%
+    group_by(GRP) %>%
+    summarize(median = median(Hs, na.rm = TRUE),
+              mean = mean(Hs, na.rm = TRUE),
+              std = sd(Hs, na.rm = TRUE)),
+  digits = 4,
+  caption = "Median, mean +/- std gene diversity by sample location."
+)
+
+kable(
+  het %>%
+    group_by(REGION) %>%
+    summarize(median = median(Hs, na.rm = TRUE),
+              mean = mean(Hs, na.rm = TRUE),
+              std = sd(Hs, na.rm = TRUE)),
+  digits = 4,
+  caption = "Median, mean +/- std gene diversity by region."
+)
+
+
+```
+
+Test for significant differences among estuaries using Friedman's test.
+
+```{r}
+
+# remove loci with Na values
+rm <- read_delim("results/gendiv.o.locstats", delim = "\t") %>%
+  select(GRP, LOCUS, Hs) %>%
+  filter(GRP %in% pops) %>%
+  mutate(GRP = ordered(GRP, levels = pops)) %>%
+  filter(is.na(Hs))
+
+temp <- het %>%
+  filter(!LOCUS %in% rm$LOCUS)
+
+friedman.test(Hs ~ GRP | LOCUS, data = temp)
+
+```
+
+Test for significant pairwise differences between estuaries using Wilcoxon signed rank test.
+
+```{r fig.cap="Results pairwise comparisons using Wilcoxon signed rank test (p-value printed).", fig.height=7, fig.width=7}
+
+het <- read_delim("results/gendiv.o.locstats", delim = "\t") %>%
+  select(GRP, LOCUS, Hs) %>%
+  filter(GRP %in% pops) %>%
+  mutate(GRP = ordered(GRP, levels = pops))
+
+# remove loci with Na values
+rm <- het %>%
+  filter(is.na(Hs))
+
+het <- het %>%
+  filter(!LOCUS %in% rm$LOCUS)
+
+# groups to compare
+comp <- as.character(unique(het$GRP))
+
+# pairs of comparisons
+# pairs <- combn(comp, 2, simplify = FALSE)
+
+pairs <- expand.grid(comp, comp) %>%
+  filter(!Var1 == Var2) %>%
+  rownames_to_column("PAIR") %>%
+  split(.$PAIR) %>%
+  purrr::map(function(x){
+    x %>%
+      select(-PAIR) %>%
+      gather(key = temp, value = GRP, 1:2) %>%
+      select(-temp)
+  })
+
+# empty data frame for results
+results <- data.frame(pop1 = character(),
+                      pop2 = character(),
+                      stat = numeric(),
+                      p.value = numeric())
+
+n <- as.numeric(length(pairs))
+
+# loop over pairs
+for(i in 1:length(pairs)){
+  
+  p <- i
+  
+  pair <- pairs[[p]]$GRP
+  
+  temp <- het %>%
+    filter(GRP %in% pair) %>%
+    mutate(GRP = ordered(GRP, levels = pair),
+         LOCUS = as.factor(LOCUS)) %>%
+  droplevels()
+  
+  wilcox <- wilcoxsign_test(Hs ~ GRP | LOCUS, 
+                data = temp,
+                zero.method = "Pratt")
+  
+  df <- data.frame("pop1" = pair[1], 
+                   "pop2" = pair[2], 
+                   "stat" = as.numeric(wilcox@statistic@teststatistic), 
+                   "p-value" = as.numeric(pvalue(wilcox)))
+  
+  results <- bind_rows(results, df)
+  
+}
+
+results <- results %>%
+  mutate(pop1 = ordered(pop1, levels = pops),
+         pop2 = ordered(pop2, levels = pops))
+
+write_delim(results, "results/exphet_est.o.wilcox")
+
+
+tmp <- results %>%
+  select(-`p.value`) %>%
+  pivot_wider(names_from = "pop2", values_from = "stat")
+
+write_delim(tmp, "results/exphet_est_matrix.o.wilcox")
+
+tmp <- results %>%
+  select(-stat) %>%
+  pivot_wider(names_from = "pop2", values_from = "p.value")
+
+write_delim(tmp, "results/exphet_est_matrix.pval.o.wilcox")
+  
+ggplot(results, aes(x = pop1, y = pop2, fill = stat)) +
+  geom_tile(color = "black") +
+  geom_text(aes(label = round(p.value, 2))) +
+  scale_fill_viridis_c() +
+  coord_fixed(ratio = 1) +
+  labs(x = "", y = "") +
+  theme_standard +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+
+```
+
+
+## Allelic richness
+
+Calculate allelic richness corrected for sample size using rarefaction.
+
+```{r eval=FALSE}
+
+# by estuary
+setPop(gen_o) <- ~POP
+
+dat <- genind2hierfstat(gen_o)
+
+df <- allelic.richness(dat,
+                       diploid = TRUE)
+
+df <- as.data.frame(df$Ar) %>%
+  rownames_to_column("LOCUS")
+
+write_delim(df, "results/estuaries_rarefied.o.allelecount", delim = "\t")
+
+```
+
+Compare levels rarefied allele counts among estuaries.
+
+```{r fig.cap="Distribution of allelic richness measured as rarefied allele counts per estuary", fig.height=5, fig.width=8}
+
+n <- length(pops)+1
+
+ar <- read_delim("results/estuaries_rarefied.o.allelecount", delim = "\t") %>%
+  gather(key = pop, value = AR, 2:n) %>%
+  mutate(pop = ordered(pop, levels = pops),
+         REGION = case_when(pop %in% c("FLA") ~ "SWATL",
+                            pop %in% c("CAMP") ~ "SGULF",
+                            pop %in% c("FLGS", "FLGN") ~ "EGULF",
+                            pop %in% c("MB", "MISS", "CS", "LA") ~ "CGULF",
+                            pop %in% c("CC") ~ "WGULF"),
+         REGION = ordered(REGION, levels = reg))
+
+ggplot(ar, aes(x = pop, y = AR, color = REGION)) +
+  geom_boxplot() +
+  scale_color_manual(values = col_regs) +
+  coord_flip() +
+  labs(x = "rarefied allele count (outlier)", y = "") +
+  theme_standard
+
+kable(
+  ar %>%
+    group_by(pop) %>%
+    summarize(median = median(AR),
+              mean = mean(AR),
+              std = sd(AR)),
+  digits = 4,
+  caption = "Median, mean +/- std rarefied allelic richness by sample location."
+)
+
+kable(
+  ar %>%
+    group_by(REGION) %>%
+    summarize(median = median(AR),
+              mean = mean(AR),
+              std = sd(AR)),
+  digits = 4,
+  caption = "Median, mean +/- std rarefied alllelic richness by region."
+)
+
+```
+
+Test for significant differences among estuaries using Friedman's test.
+
+```{r}
+
+friedman.test(AR ~ pop | LOCUS, data = ar)
+
+```
+
+Test for significant pairwise differences between estuaries using Wilcoxon signed rank test.
+
+```{r fig.cap="Results of pairwise comparison of allelic richness among estuaries using Wilcoxon signed rank test (p-value).", fig.height=7, fig.width=7}
+
+# groups to compare
+comp <- as.character(unique(ar$pop))
+
+# pairs of comparisons
+pairs <- expand.grid(comp, comp) %>%
+  filter(!Var1 == Var2) %>%
+  rownames_to_column("PAIR") %>%
+  split(.$PAIR) %>%
+  purrr::map(function(x){
+    x %>%
+      select(-PAIR) %>%
+      gather(key = temp, value = GRP, 1:2) %>%
+      select(-temp)
+  })
+
+# empty data frame for results
+results <- data.frame(pop1 = character(),
+                      pop2 = character(),
+                      stat = numeric(),
+                      p.value = numeric())
+
+n <- as.numeric(length(pairs))
+
+# loop over pairs
+for(i in 1:length(pairs)){
+  
+  p <- i
+  
+  pair <- pairs[[p]]$GRP
+  
+  temp <- ar %>%
+    filter(pop %in% pair) %>%
+    mutate(pop = ordered(pop, levels=pair),
+         LOCUS = as.factor(LOCUS)) %>%
+  droplevels()
+  
+  wilcox <- wilcoxsign_test(AR ~ pop | LOCUS, 
+                data = temp,
+                zero.method = "Pratt")
+  
+  df <- data.frame("pop1" = pair[1], 
+                   "pop2" = pair[2], 
+                   "stat" = as.numeric(wilcox@statistic@teststatistic), 
+                   "p-value" = as.numeric(pvalue(wilcox)))
+  
+  results <- bind_rows(results, df)
+  
+}
+
+
+results <- results %>%
+  mutate(pop1 = ordered(pop1, levels = pops),
+         pop2 = ordered(pop2, levels = pops))
+
+write_delim(results, "results/allelrich_est.o.wilcox")
+
+ggplot(results, aes(x = pop1, y = pop2, fill = stat)) +
+  geom_tile(color = "black") +
+  geom_text(aes(label = round(p.value, 2))) +
+  scale_fill_viridis_c() +
+  coord_fixed(ratio = 1) +
+  labs(x = "", y = "", title = "outlier") +
+  theme_standard +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+
+```
+
+
+## Evenness
+
+*Evenness* is calculated as the ratio of the number of abundant genotypes to the number of rarer genotypes calculated using the ratio of Stoddart & Tayolor index (diversity index weighted for more abundant alleles) & Shannon-Wiener index (diversity index weighted for more rare alleles).
+
+
+```{r fig.cap="Distribution of evenness of allelic diversity per estuary",fig.height=5, fig.width=8}
+
+even <- read_delim("results/gendiv.o.locstats", delim = "\t") %>%
+  select(GRP, LOCUS, EVENNESS) %>%
+  filter(GRP %in% pops) %>%
+  mutate(GRP = ordered(GRP, levels = pops),
+         REGION = case_when(GRP %in% c("FLA") ~ "SWATL",
+                            GRP %in% c("CAMP") ~ "SGULF",
+                            GRP %in% c("FLGS", "FLGN") ~ "EGULF",
+                            GRP %in% c("MB", "MISS", "CS", "LA") ~ "CGULF",
+                            GRP %in% c("CC") ~ "WGULF"),
+         REGION = ordered(REGION, levels = reg))
+
+ggplot(even, aes(x = GRP, y = EVENNESS, color = REGION)) +
+  geom_boxplot() +
+  scale_color_manual(values = col_regs) +
+  labs(x = "", y = "Evenness") +
+  coord_flip() +
+  theme_standard
+
+kable(
+  even %>%
+    group_by(GRP) %>%
+    summarize(median = median(EVENNESS, na.rm = TRUE),
+              mean = mean(EVENNESS, na.rm = TRUE),
+              std = sd(EVENNESS, na.rm = TRUE)),
+  digits = 4,
+  caption = "Median, mean +/- std evenness of allele frequencies by sample location."
+)
+
+kable(
+  even %>%
+    group_by(REGION) %>%
+    summarize(median = median(EVENNESS, na.rm = TRUE),
+              mean = mean(EVENNESS, na.rm = TRUE),
+              std = sd(EVENNESS, na.rm = TRUE)),
+  digits = 4,
+  caption = "Median, mean +/- std evenness of allele frequencies by region."
+)
+
+```
+
+Test for significant differences among estuaries using Friedman's test.
+
+```{r}
+
+# remove loci with Na values
+rm <- even %>%
+  filter(is.na(EVENNESS))
+
+temp <- even %>%
+  filter(!LOCUS %in% rm$LOCUS)
+
+friedman.test(EVENNESS ~ GRP | LOCUS, data = temp)
+
+```
+
+Test for significant pairwise differences between estuaries using Wilcoxon signed rank test.
+
+```{r fig.cap="Results of pairwise comparisons of evenness of allelic diversity between estuaries (p-values printed).", fig.height=7, fig.width=7}
+
+# remove loci with Na values
+rm <- even %>%
+  filter(is.na(EVENNESS))
+
+even <- even %>%
+  filter(!LOCUS %in% rm$LOCUS)
+
+# groups to compare
+comp <- as.character(unique(even$GRP))
+
+# pairs of comparisons
+pairs <- expand.grid(comp, comp) %>%
+  filter(!Var1 == Var2) %>%
+  rownames_to_column("PAIR") %>%
+  split(.$PAIR) %>%
+  purrr::map(function(x){
+    x %>%
+      select(-PAIR) %>%
+      gather(key = temp, value = GRP, 1:2) %>%
+      select(-temp)
+  })
+
+# empty data frame for results
+results <- data.frame(pop1 = character(),
+                      pop2 = character(),
+                      stat = numeric(),
+                      p.value = numeric())
+
+n <- as.numeric(length(pairs))
+
+# loop over pairs
+for(p in 1:n){
+  
+  pair <- pairs[[p]]$GRP
+  
+  temp <- even %>%
+    filter(GRP %in% pair) %>%
+    mutate(GRP = ordered(GRP, levels = pair),
+         LOCUS = as.factor(LOCUS)) %>%
+  droplevels()
+  
+  wilcox <- wilcoxsign_test(EVENNESS ~ GRP | LOCUS, 
+                data = temp,
+                zero.method = "Pratt")
+  
+  df <- data.frame("pop1" = pair[1], 
+                   "pop2" = pair[2], 
+                   "stat" = as.numeric(wilcox@statistic@teststatistic), 
+                   "p-value" = as.numeric(pvalue(wilcox)))
+  
+  results <- bind_rows(results, df)
+  
+}
+
+results <- results %>%
+  mutate(pop1 = ordered(pop1, levels = pops),
+         pop2 = ordered(pop2, levels = pops))
+
+write_delim(results, "results/evennes_est.o.wilcox", delim = "\t")
+
+ggplot(results, aes(x = pop1, y = pop2, fill = stat)) +
+  geom_tile(color = "black") +
+  geom_text(aes(label = round(p.value, 2))) +
+  scale_fill_viridis_c() +
+  coord_fixed(ratio = 1) +
+  labs(x = "", y = "") +
+  theme_standard +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+
+```
+
+
+
+# Comparison of genetic diversity neutral loci
+
+## Calculate measures of diversity
+
+Calculate measures of genetic diversity based on allele frequencies.
+
+```{r eval=FALSE, echo=TRUE}
+
+# define groups to analyze ====
+setPop(gen_nn) <- ~OCEAN
+
+gen_oce <- seppop(gen_nn)
+
+setPop(gen_nn) <- ~REGION
+
+gen_reg <- seppop(gen_nn)
+
+setPop(gen_nn) <- ~POP
+
+gen_pop <- seppop(gen_nn)
+
+gen_grp <- c(gen_oce, gen_reg, gen_pop)
+
+gen_grp[["ALL"]] <- gen_nn
+
+# calculate diversity stats ====
+loc_stats <- list()
+
+for (p in names(gen_grp)) {
+  
+locA <- locus_table(gen_grp[[p]], index = "shannon") %>%
+  as.data.frame() %>%
+  rownames_to_column("LOCUS")
+
+locB <- locus_table(gen_grp[[p]], index = "simpson") %>%
+  as.data.frame() %>%
+  rownames_to_column("LOCUS")
+
+temp <- left_join(locA, locB)
+
+locC <- locus_table(gen_grp[[p]], index = "invsimpson") %>%
+  as.data.frame() %>%
+  rownames_to_column("LOCUS")
+
+loc_stats[[p]] <- left_join(temp, locC)
+  
+}
+
+loc_stats <- ldply(loc_stats, data.frame) %>%
+  select(-Hexp) %>%
+  rename(GRP = `.id`,
+         SIMPSON_IDX = `X1.D`,
+         N_ALLELES = allele,
+         SHANNON_IDX = H,
+         STODD_TAYLOR_IDX = G,
+         EVENNESS = Evenness)
+
+# calculate genetic diversity stats (heterozygosity-based) ====
+loc_stats_2 <- list()
+
+for (p in names(gen_grp)) {
+  
+dat <- genind2hierfstat(gen_grp[[p]])
+stats <- basic.stats(dat)
+
+loc_stats_2[[p]] <- stats$perloc %>%
+  rownames_to_column("LOCUS")
+
+}
+
+# combine into single data frame ====
+loc_stats_2 <- ldply(loc_stats_2, data.frame) %>%
+  rename(GRP = `.id`)
+
+loc_stats <- left_join(loc_stats, loc_stats_2) %>%
+  select(GRP, LOCUS, N_ALLELES, EVENNESS, Ho, Hs, Ht, Fis, SHANNON_IDX, SIMPSON_IDX, STODD_TAYLOR_IDX)
+
+loc_stats[is.na(loc_stats)] <- NA
+
+write_delim(loc_stats, "results/gendiv.n.locstats", delim = "\t")
+
+```
+
+
+## Expected heterozygosity (Nei's gene diversity).
+
+*Hs* calculated as within population gene diversity (expected heterozygosity) according to [@Nei1987].
+
+```{r fig.cap="Distribution of expected heterozygosity per estuary", fig.height=5, fig.width=8}
+
+het <- read_delim("results/gendiv.n.locstats", delim = "\t") %>%
+  select(GRP, LOCUS, Hs) %>%
+  filter(GRP %in% pops) %>%
+  mutate(GRP = ordered(GRP, levels = pops),
+         REGION = case_when(GRP %in% c("FLA") ~ "SWATL",
+                            GRP %in% c("CAMP") ~ "SGULF",
+                            GRP %in% c("FLGS", "FLGN") ~ "EGULF",
+                            GRP %in% c("MB", "MISS", "CS", "LA") ~ "CGULF",
+                            GRP %in% c("CC") ~ "WGULF"),
+         REGION = ordered(REGION, reg))
+
+ggplot(het, aes(x = GRP, y = Hs, color = REGION)) +
+  geom_boxplot() +
+  scale_color_manual(values = col_regs) +
+  coord_flip() +
+  labs(x = "", y = "expected heterozygosity") +
+  theme_standard +
+  theme(axis.text.x = element_text(angle = -90, hjust = 1))
+
+
+kable(
+  het %>%
+    group_by(GRP) %>%
+    summarize(median = median(Hs, na.rm = TRUE),
+              mean = mean(Hs, na.rm = TRUE),
+              std = sd(Hs, na.rm = TRUE)),
+  digits = 4,
+  caption = "Median, mean +/- std gene diversity by sample location."
+)
+
+kable(
+  het %>%
+    group_by(REGION) %>%
+    summarize(median = median(Hs, na.rm = TRUE),
+              mean = mean(Hs, na.rm = TRUE),
+              std = sd(Hs, na.rm = TRUE)),
+  digits = 4,
+  caption = "Median, mean +/- std gene diversity by region."
+)
+
+
+```
+
+Test for significant differences among estuaries using Friedman's test.
+
+```{r}
+
+# remove loci with Na values
+rm <- read_delim("results/gendiv.n.locstats", delim = "\t") %>%
+  select(GRP, LOCUS, Hs) %>%
+  filter(GRP %in% pops) %>%
+  mutate(GRP = ordered(GRP, levels = pops)) %>%
+  filter(is.na(Hs))
+
+temp <- het %>%
+  filter(!LOCUS %in% rm$LOCUS)
+
+friedman.test(Hs ~ GRP | LOCUS, data = temp)
+
+```
+
+Test for significant pairwise differences between estuaries using Wilcoxon signed rank test.
+
+```{r fig.cap="Results pairwise comparisons using Wilcoxon signed rank test (p-value printed).", fig.height=7, fig.width=7}
+
+het <- read_delim("results/gendiv.n.locstats", delim = "\t") %>%
+  select(GRP, LOCUS, Hs) %>%
+  filter(GRP %in% pops) %>%
+  mutate(GRP = ordered(GRP, levels = pops))
+
+# remove loci with Na values
+rm <- het %>%
+  filter(is.na(Hs))
+
+het <- het %>%
+  filter(!LOCUS %in% rm$LOCUS)
+
+# groups to compare
+comp <- as.character(unique(het$GRP))
+
+# pairs of comparisons
+# pairs <- combn(comp, 2, simplify = FALSE)
+
+pairs <- expand.grid(comp, comp) %>%
+  filter(!Var1 == Var2) %>%
+  rownames_to_column("PAIR") %>%
+  split(.$PAIR) %>%
+  purrr::map(function(x){
+    x %>%
+      select(-PAIR) %>%
+      gather(key = temp, value = GRP, 1:2) %>%
+      select(-temp)
+  })
+
+# empty data frame for results
+results <- data.frame(pop1 = character(),
+                      pop2 = character(),
+                      stat = numeric(),
+                      p.value = numeric())
+
+n <- as.numeric(length(pairs))
+
+# loop over pairs
+for(i in 1:length(pairs)){
+  
+  p <- i
+  
+  pair <- pairs[[p]]$GRP
+  
+  temp <- het %>%
+    filter(GRP %in% pair) %>%
+    mutate(GRP = ordered(GRP, levels = pair),
+         LOCUS = as.factor(LOCUS)) %>%
+  droplevels()
+  
+  wilcox <- wilcoxsign_test(Hs ~ GRP | LOCUS, 
+                data = temp,
+                zero.method = "Pratt")
+  
+  df <- data.frame("pop1" = pair[1], 
+                   "pop2" = pair[2], 
+                   "stat" = as.numeric(wilcox@statistic@teststatistic), 
+                   "p-value" = as.numeric(pvalue(wilcox)))
+  
+  results <- bind_rows(results, df)
+  
+}
+
+results <- results %>%
+  mutate(pop1 = ordered(pop1, levels = pops),
+         pop2 = ordered(pop2, levels = pops))
+
+write_delim(results, "results/exphet_est.n.wilcox")
+  
+ggplot(results, aes(x = pop1, y = pop2, fill = stat)) +
+  geom_tile(color = "black") +
+  geom_text(aes(label = round(p.value, 2))) +
+  scale_fill_viridis_c() +
+  coord_fixed(ratio = 1) +
+  labs(x = "", y = "") +
+  theme_standard +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+
+```
+
+
+## Allelic richness
+
+Calculate allelic richness corrected for sample size using rarefaction.
+
+```{r eval=FALSE}
+
+# by estuary
+setPop(gen_nn) <- ~POP
+
+dat <- genind2hierfstat(gen_nn)
+
+df <- allelic.richness(dat,
+                       diploid = TRUE)
+
+df <- as.data.frame(df$Ar) %>%
+  rownames_to_column("LOCUS")
+
+write_delim(df, "results/estuaries_rarefied.n.allelecount", delim = "\t")
+
+```
+
+Compare levels rarefied allele counts among estuaries.
+
+```{r fig.cap="Distribution of allelic richness measured as rarefied allele counts per estuary", fig.height=5, fig.width=8}
+
+n <- length(pops)+1
+
+ar <- read_delim("results/estuaries_rarefied.n.allelecount", delim = "\t") %>%
+  gather(key = pop, value = AR, 2:n) %>%
+  mutate(pop = ordered(pop, levels = pops),
+         REGION = case_when(pop %in% c("FLA") ~ "SWATL",
+                            pop %in% c("CAMP") ~ "SGULF",
+                            pop %in% c("FLGS", "FLGN") ~ "EGULF",
+                            pop %in% c("MB", "MISS", "CS", "LA") ~ "CGULF",
+                            pop %in% c("CC") ~ "WGULF"),
+         REGION = ordered(REGION, levels = reg))
+
+ggplot(ar, aes(x = pop, y = AR, color = REGION)) +
+  geom_boxplot() +
+  scale_color_manual(values = col_regs) +
+  coord_flip() +
+  labs(x = "rarefied allele count (neutral)", y = "") +
+  theme_standard
+
+kable(
+  ar %>%
+    group_by(pop) %>%
+    summarize(median = median(AR),
+              mean = mean(AR),
+              std = sd(AR)),
+  digits = 4,
+  caption = "Median, mean +/- std rarefied allelic richness by sample location."
+)
+
+kable(
+  ar %>%
+    group_by(REGION) %>%
+    summarize(median = median(AR),
+              mean = mean(AR),
+              std = sd(AR)),
+  digits = 4,
+  caption = "Median, mean +/- std rarefied alllelic richness by region."
+)
+
+```
+
+Test for significant differences among estuaries using Friedman's test.
+
+```{r}
+
+friedman.test(AR ~ pop | LOCUS, data = ar)
+
+```
+
+Test for significant pairwise differences between estuaries using Wilcoxon signed rank test.
+
+```{r fig.cap="Results of pairwise comparison of allelic richness among estuaries using Wilcoxon signed rank test (p-value).", fig.height=7, fig.width=7}
+
+# groups to compare
+comp <- as.character(unique(ar$pop))
+
+# pairs of comparisons
+pairs <- expand.grid(comp, comp) %>%
+  filter(!Var1 == Var2) %>%
+  rownames_to_column("PAIR") %>%
+  split(.$PAIR) %>%
+  purrr::map(function(x){
+    x %>%
+      select(-PAIR) %>%
+      gather(key = temp, value = GRP, 1:2) %>%
+      select(-temp)
+  })
+
+# empty data frame for results
+results <- data.frame(pop1 = character(),
+                      pop2 = character(),
+                      stat = numeric(),
+                      p.value = numeric())
+
+n <- as.numeric(length(pairs))
+
+# loop over pairs
+for(i in 1:length(pairs)){
+  
+  p <- i
+  
+  pair <- pairs[[p]]$GRP
+  
+  temp <- ar %>%
+    filter(pop %in% pair) %>%
+    mutate(pop = ordered(pop, levels=pair),
+         LOCUS = as.factor(LOCUS)) %>%
+  droplevels()
+  
+  wilcox <- wilcoxsign_test(AR ~ pop | LOCUS, 
+                data = temp,
+                zero.method = "Pratt")
+  
+  df <- data.frame("pop1" = pair[1], 
+                   "pop2" = pair[2], 
+                   "stat" = as.numeric(wilcox@statistic@teststatistic), 
+                   "p-value" = as.numeric(pvalue(wilcox)))
+  
+  results <- bind_rows(results, df)
+  
+}
+
+
+results <- results %>%
+  mutate(pop1 = ordered(pop1, levels = pops),
+         pop2 = ordered(pop2, levels = pops))
+
+write_delim(results, "results/allelrich_est.n.wilcox")
+
+ggplot(results, aes(x = pop1, y = pop2, fill = stat)) +
+  geom_tile(color = "black") +
+  geom_text(aes(label = round(p.value, 2))) +
+  scale_fill_viridis_c() +
+  coord_fixed(ratio = 1) +
+  labs(x = "", y = "", title = "neutral") +
+  theme_standard +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+
+```
+
+
+## Evenness
+
+*Evenness* is calculated as the ratio of the number of abundant genotypes to the number of rarer genotypes calculated using the ratio of Stoddart & Tayolor index (diversity index weighted for more abundant alleles) & Shannon-Wiener index (diversity index weighted for more rare alleles).
+
+
+```{r fig.cap="Distribution of evenness of allelic diversity per estuary",fig.height=5, fig.width=8}
+
+even <- read_delim("results/gendiv.n.locstats", delim = "\t") %>%
+  select(GRP, LOCUS, EVENNESS) %>%
+  filter(GRP %in% pops) %>%
+  mutate(GRP = ordered(GRP, levels = pops),
+         REGION = case_when(GRP %in% c("FLA") ~ "SWATL",
+                            GRP %in% c("CAMP") ~ "SGULF",
+                            GRP %in% c("FLGS", "FLGN") ~ "EGULF",
+                            GRP %in% c("MB", "MISS", "CS", "LA") ~ "CGULF",
+                            GRP %in% c("CC") ~ "WGULF"),
+         REGION = ordered(REGION, levels = reg))
+
+ggplot(even, aes(x = GRP, y = EVENNESS, color = REGION)) +
+  geom_boxplot() +
+  scale_color_manual(values = col_regs) +
+  labs(x = "", y = "Evenness") +
+  coord_flip() +
+  theme_standard
+
+kable(
+  even %>%
+    group_by(GRP) %>%
+    summarize(median = median(EVENNESS, na.rm = TRUE),
+              mean = mean(EVENNESS, na.rm = TRUE),
+              std = sd(EVENNESS, na.rm = TRUE)),
+  digits = 4,
+  caption = "Median, mean +/- std evenness of allele frequencies by sample location."
+)
+
+kable(
+  even %>%
+    group_by(REGION) %>%
+    summarize(median = median(EVENNESS, na.rm = TRUE),
+              mean = mean(EVENNESS, na.rm = TRUE),
+              std = sd(EVENNESS, na.rm = TRUE)),
+  digits = 4,
+  caption = "Median, mean +/- std evenness of allele frequencies by region."
+)
+
+```
+
+Test for significant differences among estuaries using Friedman's test.
+
+```{r}
+
+# remove loci with Na values
+rm <- even %>%
+  filter(is.na(EVENNESS))
+
+temp <- even %>%
+  filter(!LOCUS %in% rm$LOCUS)
+
+friedman.test(EVENNESS ~ GRP | LOCUS, data = temp)
+
+```
+
+Test for significant pairwise differences between estuaries using Wilcoxon signed rank test.
+
+```{r fig.cap="Results of pairwise comparisons of evenness of allelic diversity between estuaries (p-values printed).", fig.height=7, fig.width=7}
+
+# remove loci with Na values
+rm <- even %>%
+  filter(is.na(EVENNESS))
+
+even <- even %>%
+  filter(!LOCUS %in% rm$LOCUS)
+
+# groups to compare
+comp <- as.character(unique(even$GRP))
+
+# pairs of comparisons
+pairs <- expand.grid(comp, comp) %>%
+  filter(!Var1 == Var2) %>%
+  rownames_to_column("PAIR") %>%
+  split(.$PAIR) %>%
+  purrr::map(function(x){
+    x %>%
+      select(-PAIR) %>%
+      gather(key = temp, value = GRP, 1:2) %>%
+      select(-temp)
+  })
+
+# empty data frame for results
+results <- data.frame(pop1 = character(),
+                      pop2 = character(),
+                      stat = numeric(),
+                      p.value = numeric())
+
+n <- as.numeric(length(pairs))
+
+# loop over pairs
+for(p in 1:n){
+  
+  pair <- pairs[[p]]$GRP
+  
+  temp <- even %>%
+    filter(GRP %in% pair) %>%
+    mutate(GRP = ordered(GRP, levels = pair),
+         LOCUS = as.factor(LOCUS)) %>%
+  droplevels()
+  
+  wilcox <- wilcoxsign_test(EVENNESS ~ GRP | LOCUS, 
+                data = temp,
+                zero.method = "Pratt")
+  
+  df <- data.frame("pop1" = pair[1], 
+                   "pop2" = pair[2], 
+                   "stat" = as.numeric(wilcox@statistic@teststatistic), 
+                   "p-value" = as.numeric(pvalue(wilcox)))
+  
+  results <- bind_rows(results, df)
+  
+}
+
+results <- results %>%
+  mutate(pop1 = ordered(pop1, levels = pops),
+         pop2 = ordered(pop2, levels = pops))
+
+write_delim(results, "results/evennes_est.n.wilcox", delim = "\t")
+
+ggplot(results, aes(x = pop1, y = pop2, fill = stat)) +
+  geom_tile(color = "black") +
+  geom_text(aes(label = round(p.value, 2))) +
+  scale_fill_viridis_c() +
+  coord_fixed(ratio = 1) +
+  labs(x = "", y = "") +
+  theme_standard +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+
+```
+

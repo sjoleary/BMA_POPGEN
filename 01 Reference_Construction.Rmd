@@ -1,0 +1,1816 @@
+---
+title: "Reference construction Gafftops"
+output:
+  html_notebook:
+    code_folding: hide
+    df_print: paged
+    highlight: kate
+    theme: flatly
+    toc: yes
+  html_document:
+    toc: yes
+---
+
+```{r load libraries, message=FALSE, warning=FALSE}
+
+knitr::opts_chunk$set(warning = FALSE, message = FALSE)
+
+# # initiate git repository
+# system('git config --global user.email "shannon.j.oleary@gmail.com"')
+# system('git config --global user.name "shannon"')
+
+source("scr/libraries.R")
+library(glue)
+
+source("scr/ggplot.R")
+source("scr/xtrafunctions.R")
+
+```
+
+# Identify individuals to use for reference assembly
+
+Import `radtagslog` file which contains the number of reads per individual.
+
+```{r}
+
+radtagslog <- read_delim("results/all.radtags.log", delim = " ")
+
+```
+
+Per library identify top 10 individuals with highest number of reads.
+
+```{r}
+
+ref_ind <- radtagslog %>%
+  group_by(LIBRARY) %>%
+  top_n(10, wt = RETAINED) %>%
+  ungroup()
+
+```
+
+Create folder for reference individuals.
+
+```{bash}
+
+mkdir /home/soleary/GAFFTOPS/BMA_POPGEN/data/REF/REF_IND
+
+```
+
+Write bash script to copy `fastq` files of reference individuals from BMA1 into a single directory.
+
+```{r}
+
+path <- "/home/soleary/GAFFTOPS/BMA_POPGEN/data/REF/REF_IND/"
+
+seq_dir <- "/home/soleary/GAFFTOPS/BMA_POPGEN/data/SEQ/BMA-1/"
+
+command <- "cp"
+
+SEQ <- ref_ind %>%
+  filter(LIBRARY == "BMA1") %>%
+  select(SAMPLE) %>%
+  mutate(temp = ".*",
+         dir = seq_dir) %>%
+  unite(SEQ, dir, SAMPLE, temp, sep = "") %>%
+  mutate(COMMAND = command,
+         PATH = path) %>%
+  select(COMMAND, SEQ, PATH)
+
+write.table(SEQ, "scr/cp_refind.sh", 
+            col.names = FALSE, quote = FALSE, row.names = FALSE)
+
+```
+
+Copy sequences of individuals to use for reference assembly in directory.
+
+```{bash}
+
+cd /home/soleary/GAFFTOPS/BMA_POPGEN
+
+chmod 755 scr/cp_refind.sh
+
+./scr/cp_refind.sh
+
+```
+
+Write bash script to copy `fastq` files of reference individuals from BMA2 into a single directory.
+
+```{r}
+
+path <- "/home/soleary/GAFFTOPS/BMA_POPGEN/data/REF/REF_IND/"
+
+seq_dir <- "/home/soleary/GAFFTOPS/BMA_POPGEN/data/SEQ/BMA-2/"
+
+command <- "cp"
+
+SEQ <- ref_ind %>%
+  filter(LIBRARY == "BMA2") %>%
+  select(SAMPLE) %>%
+  mutate(temp = ".*",
+         dir = seq_dir) %>%
+  unite(SEQ, dir, SAMPLE, temp, sep = "") %>%
+  mutate(COMMAND = command,
+         PATH = path) %>%
+  select(COMMAND, SEQ, PATH)
+
+write.table(SEQ, "scr/cp_refind.sh", 
+            col.names = FALSE, quote = FALSE, row.names = FALSE)
+
+```
+
+Create softlinks of individuals to use for reference assembly in directory.
+
+```{bash}
+
+cd /home/soleary/GAFFTOPS/BMA_POPGEN
+
+chmod 755 scr/cp_refind.sh
+
+./scr/cp_refind.sh
+
+```
+
+Write bash script to copy `fastq` files of reference individuals from library 3 into a single directory.
+
+```{r}
+
+path <- "/home/soleary/GAFFTOPS/BMA_POPGEN/data/REF/REF_IND/"
+
+seq_dir <- "/home/soleary/GAFFTOPS/BMA_POPGEN/data/SEQ/BMA-3/"
+
+command <- "cp"
+
+SEQ <- ref_ind %>%
+  filter(LIBRARY == "BMA3") %>%
+  select(SAMPLE) %>%
+  mutate(temp = ".*",
+         dir = seq_dir) %>%
+  unite(SEQ, dir, SAMPLE, temp, sep = "") %>%
+  mutate(COMMAND = command,
+         PATH = path) %>%
+  select(COMMAND, SEQ, PATH)
+
+write.table(SEQ, "scr/cp_refind.sh", 
+            col.names = FALSE, quote = FALSE, row.names = FALSE)
+
+```
+
+Create softlinks of individuals to use for reference assembly in directory.
+
+```{bash}
+
+cd /home/soleary/GAFFTOPS/BMA_POPGEN
+
+chmod 755 scr/refind_softlinks.sh
+
+./scr/refind_softlinks.sh
+
+```
+
+# Initial assembly
+
+## Run dDocent for preliminary data
+
+Execute `dDocent` from within MiSeq Library folder (`data/SEQ/BMA-1`) containing demultiplexed files and run initial assembly (parameter `PE` for overlapping reads) for c = 0.8 (lowest possible value) and K1 and K2 = 2.
+
+```{r eval=FALSE, include=FALSE}
+
+cd data/REF/REF_IND
+
+chmod 755 rundDocent.sh
+
+./rundDocent.sh
+
+cp /home/soleary/GAFFTOPS/BMA_POPGEN/data/REF/REF_IND/uniqseq.data /home/soleary/GAFFTOPS/BMA_POPGEN/data/REF/
+cp /home/soleary/GAFFTOPS/BMA_POPGEN/data/REF/REF_IND/uniqseq.peri.data /home/soleary/GAFFTOPS/BMA_POPGEN/data/REF/
+
+```
+
+The number of reads (contigs) contained in the reference depends on the data-cutoffs:
+
+* minimum within individual coverage **K1** (i.e. read must occur at least K1 times within an individual to be retained).
+* minimum number of individuals a read must occur in to be included **K2**.
+* % similarity for two stacks to be collapsed into one locus **c**.
+
+## Distribution of within individuals unique reads
+
+During reference assembly dDocent creates a file `uniqseq.data` containing the number of unique reads with 2X, 3X... coverage. dDocent will plot the distribution to aid in choosing a cut-off value.
+
+```{r plot uniqseq.data, fig.height=3, fig.width=5}
+
+uniqseq_loci <- read.csv("data/REF/uniqseq.data", sep="", header = FALSE,
+                         col.names = c("COVERAGE", "N_READS")) %>%
+  mutate(MILL_READS = N_READS/1000000)
+
+ggplot(uniqseq_loci, aes(x = COVERAGE, y = MILL_READS)) +
+  geom_bar(stat="identity", color = "black", fill = "darkorange") +
+  scale_x_continuous(expand=c(0,0)) +
+  scale_y_continuous(expand=c(0,0)) +
+  labs(x = "coverage", y = "mill unique seq") +
+  theme_standard
+
+```
+
+## Distribution of between individuals unique reads
+
+In addition, dDocent creates the file `uniqseq.peri.data` which contains the number of unique sequences that occur in more than X individuals. By choosing a cut-off value the user determines in how many individuals a unique sequence must occur in order for it to be included in the reference. In initial value of approx. 10% of individuals is sufficient for intial reference construction.
+
+```{r plot unique seq per ind, fig.height=3, fig.width=5}
+
+uniqseq_ind <- read.csv("data/REF/uniqseq.peri.data", sep="", header = FALSE,
+                        col.names = c("N_IND", "N_READS")) %>%
+  mutate(MILL_READS = N_READS/1000000)
+
+ggplot(uniqseq_ind, aes(x = N_IND, y = MILL_READS)) +
+  geom_bar(stat="identity", color = "black", fill = "darkorange") +
+  scale_x_continuous(expand=c(0,0)) +
+  scale_y_continuous(expand=c(0,0)) +
+  labs(x = "unique reads present in > X individuals",
+       y = "million reads") +
+  theme_standard
+
+```
+
+dDocent will generate a `fasta`-file containing all the loci included in the reference based on the chosen parameters. After initial reference construction, references for combinations of c, K1 and K2 should be generated and compared in terms of the number of loci and the quality of read mapping for individuals to be included in the data analysis.
+
+# Optimize assembly parameters (c, K1 & K2)
+
+## Choose c parameter
+
+### Run `RefOpt`-Script
+
+`RefOpt` used to create separate references at each similarity value (c = 0.8 - 0.98) for a given range of K1 = 2-10 (cut-off for within individual coverage) and K2 = 1-10 (minimum no. of individual read must occur in).
+
+Before running dDocent ensure that `uniq.seq`-files (generated during intial dDocent run to create reference) are in same directory as reference optimizing script being executed from. Specificy `minK1`, `maxK1`, `minK2`, `maxK2`, `Assenmbly type` and `number of processors.
+
+```{bash eval=FALSE, include=FALSE}
+
+cd data/REF/REF_IND
+
+ReferenceOpt.sh 2 3 1 10 PE 20
+
+cp /home/soleary/GAFFTOPS/BMA_POPGEN/data/REF/REF_IND/kopt.data /home/soleary/GAFFTOPS/BMA_POPGEN/data/REF/
+
+```
+
+Output file `kopt.data` contains the number of reads in reference for each c, K1, K2 combination.
+
+### Analyze `kopt`-output file
+
+```{r import kopt}
+
+# import output from RefOpt2.sh script
+kopt <- read.table("data/REF/kopt.data", sep="", header = FALSE,
+                   col.names = c("K1", "K2", "c", "N_CONTIGS"))
+
+```
+
+The number of reads in the reference vary depending on the minimum within individual coverage (K1) for each K2 for c = 0.8 - 0.98. The number of reads in the reference decrease as the cut-off for minimum within individual coverage for loci to be included increase. For each value of K1 the number of reads in the reference decreases as the minimum number of individuals a locus must be recovered in to be included increases. The number of loci included in a reference increases with c - for lower values of K1 and K2 there is a sudden increase in loci around c = 0.9 indicating that loci are being oversplit.
+
+```{r kopt overview, fig.height=6, fig.width=15}
+
+# plot number of reads for each value of c for each K1 and K2 combination
+ggplot(kopt, aes(x = c, y = N_CONTIGS)) +
+  geom_point() +
+  geom_line() +
+  facet_grid(K1 ~ K2, labeller=label_both) +
+  labs(x = "% similarity c", y = "no. of contigs in reference") +
+  theme_facet
+
+```
+
+Compare the distribution of number of loci in each reference to the number of fragments expected per individual based on the cut-site frequencies and selected window (approx. 90,000).
+
+```{r kopt distribution}
+
+# plot distribution
+ggplot(kopt, aes(x = N_CONTIGS)) +
+  geom_histogram(color = "black", fill = "darkorange") +
+  facet_grid(~ K1) +
+  labs(x = "number of contigs in reference") +
+  theme_facet
+
+```
+
+For K2 = 2, reads must occur in at least ~10% of individuals used to create the reference to be included.
+
+```{r c vs Contigs}
+
+# plot no. of reads vs. c for K2 = 2 K1 = 2-10
+ggplot(kopt, aes(x = c, y = N_CONTIGS, fill = K1)) +
+  geom_line(data = subset(kopt, K2 %in% 2), aes(group = K1), color = "black") +
+  geom_point(data = subset(kopt, K2 %in% 2),
+             shape = 21, size = 2, color = "black") +
+  labs(x = "%-Similarity c for K2 = 2 and K1 = 2-10",
+       y = "Number of Contigs in Reference") +
+  theme_standard
+
+```
+
+The lower the cut-off values from K1 and K2, the more likely loci will be included that are due to individual variability and are not informative on a population level (which can unnecessarily increase computational time).
+
+If the cut-off values are too high loci that are informative might be excluded, which could lead to ascertainment bias. The optimum values for K1 and K2 are best determined by analyzing the mapping statistics of individuals mapped to references created for a combination of K1 and K2 values after an optimum c-value has been determined. The user will be able to compare the number of reads mapped in general, the number of reads mapped in pairs, the number of unmapped reads and the distribution of coverage to determine the best combinations of K.
+
+In general, for a value c < 0.88 - 0.9 the variance in the number of reads obtained is negligible, while there is an observable jump in the number of reads in the reference for values of c > 0.95. This is due to over-splitting of loci at higher values. The higher c the more similar stacks of reads have to be in order to be combined into one locus. It's better to "undersplit" and then filter out loci later (e.g. as paralogs).
+
+c-parameter chosen based on `kopt.data` results: **c = 0.8**
+
+## Choose K1 and K2 cut-off values
+
+### Assemble references for K1/K2 combinations
+
+Write bash script to create a new directory for each reference to be generated, here for K1 = 2-10 and K2 = 1-10.
+
+```{r}
+
+K1 <- as.character(c(2:10))
+K2 <- as.character(c(1:6))
+
+path <- "/home/soleary/GAFFTOPS/BMA_POPGEN/data/REF/"
+command <- "mkdir"
+
+REF <- expand.grid(K1, K2) %>%
+  mutate(temp = "REF",
+         PATH = path,
+         COMMAND = command) %>%
+  select(COMMAND, PATH, temp, Var1, Var2) %>%
+  unite(dir, 2:4, sep = "", remove = TRUE) %>%
+  arrange(dir) %>%
+  unite(PATH, 2:3, remove = TRUE)
+
+write_delim(REF, "scr/mkdirREF.sh", col_names = FALSE)
+
+```
+
+Run bash script to write new directories:
+
+```{bash}
+
+chmod 755 scr/mkdirREF.sh
+./scr/mkdirREF.sh
+
+```
+
+In each Reference directory create soft links to the demultiplexed (and quality trimmed) fastq files from the `REF_IND` directory, containing individuals to be used to create the reduced representation reference.
+
+```{r}
+
+miseq <- "/home/soleary/GAFFTOPS/BMA_POPGEN/data/REF/REF_IND/*.fq.gz"
+
+command <- "ln -s"
+
+SEQ <- REF %>%
+  select(PATH) %>%
+  mutate(COMMAND = command,
+         SEQ = miseq) %>%
+  select(COMMAND, SEQ, PATH)
+
+write.table(SEQ, "scr/miseq_softlinks.sh", 
+            col.names = FALSE, quote = FALSE, row.names = FALSE)
+
+```
+
+Create softlinks in each folder:
+
+```{bash}
+
+chmod 755 scr/miseq_softlinks.sh
+./scr/miseq_softlinks.sh
+
+```
+
+`dDocent` can be run using either a configuration files or interactively. The configuration file does not include options to input K1 and K2. Rather than do that manually, `dDocent` can be run in a shell script with all the inputs for the interactive use. Different versions of `dDocent` may have slightly different input needed so double check before creating shell scripts for reference construction.
+
+```{r}
+
+# parameters for shell script ----
+
+# correct number of individuals
+ind <- "yes"
+
+# number of processors
+processors <- "15"
+
+# quality trim needed
+trim <- "no"
+
+# perform reference assembly
+assembly <- "yes"
+
+# read type (overlapping/miseq OL, paired end PE)
+type <- "PE"
+
+# used defined c-value
+set_c <- "yes"
+
+# set c-value
+c <- "0.80"
+
+# read mapping required
+map <- "no"
+
+# SNP calling required
+snp <- "no"
+
+# email address
+email <- "shannon.j.oleary@gmail.com"
+
+# K-values
+K1 <- as.character(c(2:10))
+K2 <- as.character(c(1:6))
+
+
+# create dataframe with reference directory, K1 and K2 to loop over ----
+
+# path to parent directory for references
+path <- "/home/soleary/GAFFTOPS/BMA_POPGEN/data/REF/"
+
+
+df <- expand.grid(K1, K2) %>%
+  mutate(temp = "REF",
+         PATH = path) %>%
+  rename(K1 = Var1,
+         K2 = Var2) %>%
+  select(PATH, temp, K1, K2) %>%
+  unite(dir, 2:3, sep = "", remove = FALSE) %>%
+  select(- temp) %>%
+  unite(dir, dir, K2, sep = "_", remove = FALSE) %>%
+  unite(PATH, 1:2, sep = "") %>%
+  rownames_to_column("REF_NUMBER") %>%
+  mutate(REF_NUMBER = as.numeric(REF_NUMBER))
+
+# write shell scripts in each directory ----
+
+for(i in 1:nrow(df)){
+  
+  # select correct path and K1/K2 combination
+  param <- df %>%
+    filter(REF_NUMBER == i)
+  
+  # write shell script
+  path <- glue(param$PATH, "/dDocent_refassembly.sh")
+  
+  con <- file(path, open = "wt")
+  
+  writeLines(glue("dDocent <<Over! 
+                  {ind} 
+                  {processors} 
+                  {trim} 
+                  {assembly} 
+                  {type}  
+                  {set_c} 
+                  {c} 
+                  {map} 
+                  {snp} 
+                  {email} 
+                  {param$K1} 
+                  {param$K2} 
+                  Over!"), con)
+  
+  close(con)
+  
+}
+
+```
+
+Within each `REF*`-directory, execute `dDocent` to initiate a run which will create a reference for the chosen c-value and K1/K2 data cut-offs.
+
+```{bash}
+
+# go to reference parent directory
+cd /home/soleary/GAFFTOPS/BMA_POPGEN/data/REF/
+
+# loop over all reference creation folders
+for d in REF*_*
+
+do
+
+    ( cd "$d" && chmod 755 dDocent_refassembly.sh && ./dDocent_refassembly.sh)
+    
+done
+
+```
+
+Remove the softlinks to the MiSeq data used for mapping and other files generated during `dDocent`-run in each folder, so that only `reference.fasta` and associated files and stats files remain:
+
+```{r}
+
+# number of references generated
+n <- 54
+
+# create vector with n elements
+files <- as.character(c(1:n))
+
+# create dataframe with file names to be removed
+files <- data.frame(files) %>%
+  mutate(F1 = "*.fq.gz",
+         F2 = "*.seqs",
+         F3 = "*.fastq",
+         F4 = "*.gz",
+         F5 = "namelist",
+         F6 = "uniqCperindv",
+         F7 = "dDocent.runs",
+         F8 = "xxx*",
+         F9 = "fastp*",
+         F10 = "total*",
+         F11 = "uniq.full.*",
+         F12 = "sort.*",
+         F13 = "rainbow*",
+         F14 = "overlap.*",
+         F15 = "other*",
+         F16 = "contig.*",
+         F17 = "logfiles/") %>%
+  select(-files)
+
+# create combined dataframe of all ref directories and files to be removed
+command <- "rm"
+
+RM <- bind_cols(REF, files) %>%
+  select(-COMMAND) %>%
+  gather(key = temp, value = FILE, 2:18) %>%
+  select(-temp) %>%
+  unite(col = PATH, 1:2, sep = "/", remove = TRUE) %>%
+  mutate(COMMAND = command) %>%
+  select(COMMAND, PATH)
+
+write.table(RM, "scr/remove-miseq.sh", 
+            col.names = FALSE, quote = FALSE, row.names = FALSE)
+
+```
+
+Remove unnecessary intermediate files
+
+```{bash}
+
+chmod 755 scr/remove-miseq.sh
+./scr/remove-miseq.sh
+
+```
+
+### Map subset of individuals to assembled references
+
+K1 and K2 are chosen based on mapping statistics of mapping HiSeq data to assembled references, i.e. HiSeq data needs to be demultiplexed and quality trimmed before it can be mapped. Create random set of high quality and low quality individuals from multiple locations to assess mapping quality.
+
+```{r}
+
+map_ind <- radtagslog %>%
+  filter(!str_detect(SAMPLE, 'BLANK'),
+         RETAINED > 500000) %>%
+  group_by(LIBRARY) %>%
+  sample_n(10, replace = FALSE) %>%
+  ungroup()
+
+```
+
+Create folder for reference individuals.
+
+```{bash}
+
+mkdir /home/soleary/GAFFTOPS/BMA_POPGEN/data/REF/MAP_IND
+
+```
+
+Write bash script to copy `fastq` files of reference individuals from BMA1 into a single directory.
+
+```{r}
+
+path <- "/home/soleary/GAFFTOPS/BMA_POPGEN/data/REF/MAP_IND/"
+
+seq_dir <- "/home/soleary/GAFFTOPS/BMA_POPGEN/data/SEQ/BMA-1/"
+
+command <- "cp"
+
+SEQ <- map_ind %>%
+  filter(LIBRARY == "BMA1") %>%
+  select(SAMPLE) %>%
+  mutate(temp = ".*",
+         dir = seq_dir) %>%
+  unite(SEQ, dir, SAMPLE, temp, sep = "") %>%
+  mutate(COMMAND = command,
+         PATH = path) %>%
+  select(COMMAND, SEQ, PATH)
+
+write.table(SEQ, "scr/cp_mapind.sh", 
+            col.names = FALSE, quote = FALSE, row.names = FALSE)
+
+```
+
+Copy sequences of individuals to use for mapping in directory.
+
+```{bash}
+
+cd /home/soleary/GAFFTOPS/BMA_POPGEN
+
+chmod 755 scr/cp_mapind.sh
+
+./scr/cp_mapind.sh
+
+```
+
+Write bash script to copy `fastq` files of reference individuals from BMA2 into a single directory.
+
+```{r}
+
+path <- "/home/soleary/GAFFTOPS/BMA_POPGEN/data/REF/MAP_IND/"
+
+seq_dir <- "/home/soleary/GAFFTOPS/BMA_POPGEN/data/SEQ/BMA-2/"
+
+command <- "cp"
+
+SEQ <- map_ind %>%
+  filter(LIBRARY == "BMA2") %>%
+  select(SAMPLE) %>%
+  mutate(temp = ".*",
+         dir = seq_dir) %>%
+  unite(SEQ, dir, SAMPLE, temp, sep = "") %>%
+  mutate(COMMAND = command,
+         PATH = path) %>%
+  select(COMMAND, SEQ, PATH)
+
+write.table(SEQ, "scr/cp_mapind.sh", 
+            col.names = FALSE, quote = FALSE, row.names = FALSE)
+
+```
+
+Create softlinks of individuals to use for mapping in directory.
+
+```{bash}
+
+cd /home/soleary/GAFFTOPS/BMA_POPGEN
+
+chmod 755 scr/cp_mapind.sh
+
+./scr/cp_mapind.sh
+
+```
+
+Write bash script to copy `fastq` files of reference individuals from library 3 into a single directory.
+
+```{r}
+
+path <- "/home/soleary/GAFFTOPS/BMA_POPGEN/data/REF/MAP_IND/"
+
+seq_dir <- "/home/soleary/GAFFTOPS/BMA_POPGEN/data/SEQ/BMA-3/"
+
+command <- "cp"
+
+SEQ <- map_ind %>%
+  filter(LIBRARY == "BMA3") %>%
+  select(SAMPLE) %>%
+  mutate(temp = ".*",
+         dir = seq_dir) %>%
+  unite(SEQ, dir, SAMPLE, temp, sep = "") %>%
+  mutate(COMMAND = command,
+         PATH = path) %>%
+  select(COMMAND, SEQ, PATH)
+
+write.table(SEQ, "scr/cp_mapind.sh", 
+            col.names = FALSE, quote = FALSE, row.names = FALSE)
+
+```
+
+Create softlinks of individuals to use for mapping in directory.
+
+```{bash}
+
+cd /home/soleary/GAFFTOPS/BMA_POPGEN
+
+chmod 755 scr/cp_mapind.sh
+
+./scr/cp_mapind.sh
+
+```
+
+In each Reference directory create links to the demultiplexed and trimmed fastq files to use for mapping.
+
+```{r}
+
+# path to directory with untrimmed fastq files for 20 individuals
+hiseq <- "/home/soleary/GAFFTOPS/BMA_POPGEN/data/REF/MAP_IND/*.fq.gz"
+
+command <- "ln -s"
+
+# create dataframe to create softlinks in each reference directory
+SEQ <- REF %>%
+  select(PATH) %>%
+  mutate(COMMAND = command,
+         SEQ = hiseq) %>%
+  select(COMMAND, SEQ, PATH)
+
+# write script to file
+write.table(SEQ, "scr/hiseq_softlinks.sh", 
+            col.names = FALSE, quote = FALSE, row.names = FALSE)
+
+```
+
+Write softlinks to hiseq sequence data for 20 individuals:
+
+```{bash}
+
+chmod 755 scr/hiseq_softlinks.sh
+./scr/hiseq_softlinks.sh
+
+```
+
+Write configuration file to run dDocent in each reference directory.
+
+```{r}
+
+
+# parameters for shell script ----
+
+# correct number of individuals
+ind <- "yes"
+
+# number of processors
+processors <- "25"
+
+# quality trim needed
+trim <- "no"
+
+# perform reference assembly
+assembly <- "no"
+
+# read mapping required
+map <- "yes"
+
+# custom values for mapping
+map_param <- "yes"
+
+# match score
+A <- "1"
+
+# mismatch score
+B <- "3"
+
+# gap penalty
+O <- "5"
+
+# SNP calling required
+snp <- "yes"
+
+# email address
+email <- "shannon.j.oleary@gmail.com"
+
+# create dataframe with reference directory, K1 and K2 to loop over ----
+
+# path to parent directory for references
+path <- "/home/soleary/GAFFTOPS/BMA_POPGEN/data/REF/"
+
+
+df <- expand.grid(K1, K2) %>%
+  mutate(temp = "REF",
+         PATH = path) %>%
+  rename(K1 = Var1,
+         K2 = Var2) %>%
+  select(PATH, temp, K1, K2) %>%
+  unite(dir, 2:3, sep = "", remove = FALSE) %>%
+  select(- temp) %>%
+  unite(dir, dir, K2, sep = "_", remove = FALSE) %>%
+  unite(PATH, 1:2, sep = "") %>%
+  rownames_to_column("REF_NUMBER") %>%
+  mutate(REF_NUMBER = as.numeric(REF_NUMBER))
+
+# write shell scripts in each directory ----
+
+for(i in 1:nrow(df)){
+  
+  # select correct path and K1/K2 combination
+  param <- df %>%
+    filter(REF_NUMBER == i)
+  
+  # write shell script
+  path <- glue(param$PATH, "/dDocent_map.sh")
+  
+  con <- file(path, open = "wt")
+  
+  writeLines(glue("dDocent <<Over! 
+                  {ind} 
+                  {processors} 
+                  {trim} 
+                  {assembly} 
+                  {map}  
+                  {map_param} 
+                  {A} 
+                  {B} 
+                  {O} 
+                  {snp} 
+                  {email} 
+                  Over!"), con)
+  
+  close(con)
+  
+}
+
+```
+
+Execute `dDocent` from within each reference folder to initiate a run to map those individuals to the generated references and call SNPs.
+
+```{bash}
+
+# go to reference parent directory
+cd /home/soleary/GAFFTOPS/BMA_POPGEN/data/REF/
+
+# loop over all reference creation folders
+for d in REF*_*
+
+do
+
+    ( cd "$d" && chmod 755 dDocent_map.sh && ./dDocent_map.sh)
+    
+done
+
+```
+
+Write file to remove softlinks to hiseq sequence files.
+
+```{r}
+
+command <- "rm"
+
+RM <- REF %>%
+  mutate(COMMAND = command,
+         FASTQ = "*.fq.gz") %>%
+  unite(FILE, PATH, FASTQ, sep = "/", remove = TRUE)
+  
+# write script to file
+write.table(RM, "scr/rm-hiseq.sh", 
+            col.names = FALSE, quote = FALSE, row.names = FALSE)
+
+```
+
+Remove fastq files.
+
+```{bash}
+
+chmod 755 scr/rm-hiseq.sh
+./scr/rm-hiseq.sh
+
+```
+
+Write file to remove `covstats` files.
+
+```{r}
+
+command <- "rm"
+
+RM <- REF %>%
+  mutate(COMMAND = command,
+         FASTQ = "*.cov.stats") %>%
+  unite(FILE, PATH, FASTQ, sep = "/", remove = TRUE)
+  
+# write script to file
+write.table(RM, "scr/rm-covstats.sh", 
+            col.names = FALSE, quote = FALSE, row.names = FALSE)
+
+```
+
+Remove fastq files.
+
+```{bash}
+
+chmod 755 scr/rm-covstats.sh
+./scr/rm-covstats.sh
+
+```
+
+### Query mapping statistics
+
+During the mapping stage, `dDocent` calls `BWA` to map reads from the individuals in the folder to the generated MiSeqReference and create a `-RG.bam`-file for each individual. The second column of a BAM (or SAM) file contains FLAGs with binary encoded information on mapping, pairedness etc. that can be used to compare the mapping efficiency of the generated MiSeq references.
+
+Count number of reads and mapped reads using `samtools idxstats <aln-RG.bam>` which will retrieve and print stats in the bam-file. The output is TAB-delimited with each line consisting of reference sequence name, sequence length, # mapped reads and # unmapped (empty) reads. `samtools` can also be be used to query `samtools flagstat file.bam` which returns an output containing the number of reads for which each flag is true.
+
+#### Run Flagstats
+
+```{bash}
+
+cd /home/soleary/GAFFTOPS/BMA_POPGEN/data/REF/MAP_IND
+
+ls -lh >> test.ind
+
+```
+
+Write script to gather flagstats from all `bam`-files.
+
+```{r}
+
+bam <- read.table("data/REF/MAP_IND/test.ind", 
+                  header = FALSE, skip = 1, stringsAsFactors = FALSE) %>%
+  filter(!V9 == "test.ind") %>%
+  separate(V9, into = c("IND", "temp"), -9) %>%
+  filter(temp %in% c(".R1.fq.gz", ".R2.fq.gz")) %>%
+  mutate(FILE = "-RG.bam") %>%
+  unite(BAM, IND, FILE, sep = "") %>%
+  select(BAM) %>%
+  distinct()
+
+bam <- as.data.frame(t(bam)) %>%
+  mutate(COMMAND = "samtools flagstat",
+         OUT = ">> REF.flagstats") %>%
+  gather(key = IND, value = FILE, 1:30) %>%
+  select(COMMAND, FILE, OUT)
+
+write.table(bam, "scr/flagstats.sh", 
+            col.names = FALSE, quote = FALSE, row.names = FALSE)
+
+# write script to place copy of configuration file in each reference directory
+scr <- "/home/soleary/GAFFTOPS/BMA_POPGEN/scr/flagstats.sh"
+
+command <- "cp"
+
+# create dataframe to create softlinks in each reference directory
+CP <- REF %>%
+  mutate(COMMAND = command,
+         FILE = scr) %>%
+  select(COMMAND, FILE, PATH)
+
+# write script to file
+write.table(CP, "scr/copy_flagstats.sh", 
+            col.names = FALSE, quote = FALSE, row.names = FALSE)
+
+```
+
+Copy flagstats.
+
+```{bash}
+
+chmod 755 scr/copy_flagstats.sh
+./scr/copy_flagstats.sh
+
+```
+
+Create script to run flagstats for all references.
+
+```{r}
+
+command <- "cd"
+
+df <- REF %>%
+  mutate(COMMAND = command,
+         temp = c(1:nrow(REF)),
+         CHMOD = "chmod 755 flagstats.sh",
+         EXECUTE = "./flagstats.sh")
+
+df1 <- df %>%
+  select(temp, CHMOD) %>%
+  rename(col1 = CHMOD)
+
+df2 <- df %>%
+  select(temp, EXECUTE) %>%
+  rename(col1 = EXECUTE)
+
+df3 <- df %>%
+  select(temp, COMMAND, PATH) %>%
+  unite(col1, COMMAND, PATH, sep = " ", remove = TRUE)
+
+FLAG <- bind_rows(df3, df1) 
+
+FLAG <- bind_rows(FLAG, df2) %>% 
+           arrange(temp) %>%
+  select(-temp)
+
+# write script to file
+write.table(FLAG, "scr/run_flagstats.sh", 
+            col.names = FALSE, quote = FALSE, row.names = FALSE)
+
+```
+
+Run flagstats.
+
+```{bash}
+
+chmod 755 scr/run_flagstats.sh
+./scr/run_flagstats.sh
+
+```
+
+Need to rename and copy into results folder.
+
+```{r}
+
+K1 <- as.character(c(2:10))
+K2 <- as.character(c(1:6))
+
+rename <- expand.grid(K1, K2) %>%
+  mutate(temp = "REF", 
+         ending = ".flagstats") %>%
+  select(temp, Var1, Var2, ending) %>%
+  unite(REF, 1:4, sep = "") %>%
+  arrange(REF) %>%
+  mutate(mv = "mv REF.flagstats", 
+         temp = c(1:54)) %>%
+  select(temp, mv, REF) %>%
+  unite(col1, mv, REF, sep = " ")
+
+# View(rename)
+
+command <- "cd"
+
+df <- REF %>%
+  mutate(COMMAND = command,
+         temp = c(1:nrow(REF)),
+         MV = "mv *.flagstats /home/soleary/GAFFTOPS/BMA_POPGEN/results/")
+
+df1 <- df %>%
+  select(temp, COMMAND, PATH) %>%
+  unite(col1, COMMAND, PATH, sep = " ", remove = TRUE)
+
+df2 <- df %>%
+  select(temp, MV) %>%
+  rename(col1 = MV)
+
+MV <- bind_rows(df1, rename) 
+
+MV <- bind_rows(MV, df2) %>% 
+           arrange(temp) %>%
+  select(-temp)
+
+# View(MV)
+
+# write script to file
+write.table(MV, "scr/move_flagstats.sh", 
+            col.names = FALSE, quote = FALSE, row.names = FALSE)
+
+```
+
+Execute:
+
+```{bash}
+
+chmod 755 scr/move_flagstats.sh
+./scr/move_flagstats.sh
+
+```
+
+#### Run idxstats
+
+Write script to gather idxstats from all `bam`-files.
+
+```{r}
+
+bam <- read.table("data/REF/MAP_IND/test.ind", 
+                  header = FALSE, skip = 1, stringsAsFactors = FALSE) %>%
+  filter(!V9 == "test.ind") %>%
+  separate(V9, into = c("IND", "temp"), -9) %>%
+  filter(temp %in% c(".R1.fq.gz", ".R2.fq.gz")) %>%
+  mutate(FILE = "-RG.bam") %>%
+  unite(BAM, IND, FILE, sep = "") %>%
+  select(BAM) %>%
+  distinct()
+
+bam <- as.data.frame(t(bam)) %>%
+  mutate(COMMAND = "samtools idxstats",
+         OUT = ">> REF.idxstats") %>%
+  gather(key = IND, value = FILE, 1:30) %>%
+  select(COMMAND, FILE, OUT)
+
+write.table(bam, "scr/idxstats.sh", 
+            col.names = FALSE, quote = FALSE, row.names = FALSE)
+
+# write script to place copy of configuration file in each reference directory
+scr <- "/home/soleary/GAFFTOPS/BMA_POPGEN/scr/idxstats.sh"
+
+command <- "cp"
+
+# create dataframe to create softlinks in each reference directory
+CP <- REF %>%
+  mutate(COMMAND = command,
+         FILE = scr) %>%
+  select(COMMAND, FILE, PATH)
+
+# write script to file
+write.table(CP, "scr/copy_idxstats.sh", 
+            col.names = FALSE, quote = FALSE, row.names = FALSE)
+
+```
+
+Copy idxstats.
+
+```{bash}
+
+chmod 755 scr/copy_idxstats.sh
+./scr/copy_idxstats.sh
+
+```
+
+Create script to run idxstats for all references.
+
+```{r}
+
+command <- "cd"
+
+df <- REF %>%
+  mutate(COMMAND = command,
+         temp = c(1:nrow(REF)),
+         CHMOD = "chmod 755 idxstats.sh",
+         EXECUTE = "./idxstats.sh")
+
+df1 <- df %>%
+  select(temp, CHMOD) %>%
+  rename(col1 = CHMOD)
+
+df2 <- df %>%
+  select(temp, EXECUTE) %>%
+  rename(col1 = EXECUTE)
+
+df3 <- df %>%
+  select(temp, COMMAND, PATH) %>%
+  unite(col1, COMMAND, PATH, sep = " ", remove = TRUE)
+
+FLAG <- bind_rows(df3, df1) 
+
+FLAG <- bind_rows(FLAG, df2) %>% 
+           arrange(temp) %>%
+  select(-temp)
+
+# write script to file
+write.table(FLAG, "scr/run_idxstats.sh", 
+            col.names = FALSE, quote = FALSE, row.names = FALSE)
+
+```
+
+Run idxstats.
+
+```{bash}
+
+chmod 755 scr/run_idxstats.sh
+./scr/run_idxstats.sh
+
+```
+
+Need to rename and copy into results folder.
+
+```{r}
+
+K1 <- as.character(c(2:10))
+K2 <- as.character(c(1:6))
+
+rename <- expand.grid(K1, K2) %>%
+  mutate(temp = "REF", 
+         ending = ".idxstats") %>%
+  select(temp, Var1, Var2, ending) %>%
+  unite(REF, 1:4, sep = "") %>%
+  arrange(REF) %>%
+  mutate(mv = "mv REF.idxstats", 
+         temp = c(1:54)) %>%
+  select(temp, mv, REF) %>%
+  unite(col1, mv, REF, sep = " ")
+
+View(rename)
+
+command <- "cd"
+
+df <- REF %>%
+  mutate(COMMAND = command,
+         temp = c(1:nrow(REF)),
+         MV = "mv *.idxstats /home/soleary/GAFFTOPS/BMA_POPGEN/results/")
+
+df1 <- df %>%
+  select(temp, COMMAND, PATH) %>%
+  unite(col1, COMMAND, PATH, sep = " ", remove = TRUE)
+
+df2 <- df %>%
+  select(temp, MV) %>%
+  rename(col1 = MV)
+
+MV <- bind_rows(df1, rename) 
+
+MV <- bind_rows(MV, df2) %>% 
+           arrange(temp) %>%
+  select(-temp)
+
+View(MV)
+
+# write script to file
+write.table(MV, "scr/move_idxstats.sh", 
+            col.names = FALSE, quote = FALSE, row.names = FALSE)
+
+```
+
+Execute:
+
+```{bash}
+
+chmod 755 scr/move_idxstats.sh
+./scr/move_idxstats.sh
+
+```
+
+#### Format stats files into tidy data sets
+
+Appending the file results in the information per individual being printed in a new set of row being appended to the file, i.e. there will be as many rows for a given locus as individuals were mapped. The file can be re-formatted and summary statistics calculated using dplyr and tidyr.
+
+Format idxstats
+
+```{r format idxstats}
+
+# having max value for K2 = 10 causing problems (2 digits); need to manually edit
+
+# create vectors of files to be imported, reference codes, K1 and K2, dataframe names
+filenames <- list.files(path = "results", pattern = "*.idxstats")
+
+ref_code <- str_sub(filenames, 4, -10)
+
+k1_list <- str_sub(ref_code, 1, -2)
+
+k2_list <- str_sub(ref_code, start = -1)
+
+names <- str_sub(filenames, 1, -6)
+
+# import data
+for (i in names){
+  filepath <- file.path("results", paste(i, 'stats', sep =""))
+  assign(i, read.table(filepath, sep = "", header = FALSE,
+                     col.names = c("Locus", "Length", "Reads_Mapped", 'blank')) %>%
+           select(1:3))
+  }
+
+# Create list of one dataframe per idxstats file and group by locus
+# make sure to delete old list if rerunning the code
+rm(dflist_idx)
+
+dflist_idx <- lapply(ls(pattern = "*.idx"), get)
+
+for (df in 1:length(dflist_idx)){
+  x <- dflist_idx[[df]]
+  x[['Locus']] <- as.character(x[['Locus']])
+  x = x %>% group_by(Locus)
+  dflist_idx[[df]] <- x
+}
+
+# Create new dataframes with summary stats per REF bind into final output/dataframe
+RefMapStats.idx <- data.frame()
+
+for (df in 1:length(dflist_idx)){
+  x = summarize(dflist_idx[[df]],
+                Length = mean(Length),
+                Mean_Mapped = mean(Reads_Mapped),
+                Sum_Mapped = sum(Reads_Mapped),
+                Min_Mapped = min(Reads_Mapped),
+                Max_Mapped = max(Reads_Mapped),
+                SD_Mapped = sd(Reads_Mapped))
+  x[x == 0] <- NA
+
+  temp <- summarize(x, Mean_Mapped_Non0 = mean(Mean_Mapped, na.rm = TRUE)) %>%
+    mutate(K1 = k1_list[df],
+           K2 = k2_list[df],
+           REF = ref_code[df],
+           Not_Mapped = nrow(filter(x, is.na(Sum_Mapped))),
+           N_Loci_Ref = nrow(x)) %>%
+    select(K1, K2, REF, N_Loci_Ref, Not_Mapped, Mean_Mapped_Non0)
+
+  RefMapStats.idx <- bind_rows(RefMapStats.idx, temp)
+}
+
+write_delim(RefMapStats.idx, "results/RefMapStats.idx", delim = "\t")
+
+```
+
+Format flagstats
+
+```{r format flagstats}
+
+# Files to be imported
+filenames <- list.files(path='results', pattern = '*.flagstats')
+
+# create vectors of files to be imported
+names <- str_sub(filenames, 1, -6)
+
+# import data
+for (i in names){
+  filepath <- file.path('results', paste(i, 'stats', sep =""))
+  assign(i, read.csv(filepath, sep = "+", header = FALSE,
+                     col.names = c("N_Reads", "CAT"),
+                     stringsAsFactors = FALSE) %>%
+           select(1:2))
+}
+
+rm(dflist_flag)
+
+# Create list of one dataframe per flagstats file and create tidy data set
+# should be 60 - 1 elements/references
+dflist_flag <- lapply(ls(pattern = "*flag"), get)
+# dflist_flag <- dflist_flag[-1]
+# dflist_flag <- dflist_flag[-61]
+
+
+# Change N_Reads to numeric
+for (df in 1:length(dflist_flag)){
+  x <- dflist_flag[[df]]
+  x[['N_Reads']] <- as.numeric(x[['N_Reads']])
+  dflist_flag[[df]] <- x
+}
+
+# number of individuals mapped
+n <- 30
+
+for (df in 1:length(dflist_flag)){
+  x <- dflist_flag[[df]]
+
+  x <- x %>%
+    filter(grepl("0 mapped|properly paired|mapQ>=5", CAT)) %>%
+    mutate(MAPSTAT = ifelse(grepl("mapQ>=5", CAT), "Mismatch",
+                   ifelse(grepl("properly", CAT), "Prop_Paired", "Mapped"))) %>%
+    mutate(Ind = c(rep(1:n, each = 3))) %>% 
+    # not sure if extra individual in there somehow
+    select(4, 3, 1) %>%
+    spread(MAPSTAT, N_Reads)
+
+  dflist_flag[[df]] <- x
+}
+
+temp <- dflist_flag[[df]]
+
+# Create new dataframes with summary stats and add to main final data frame
+RefMapStats.flag <- data.frame()
+for (df in 1:length(dflist_flag)){
+  x = summarize(dflist_flag[[df]], Sum_Mapped = sum(Mapped),
+                             Reads_Mapped = mean(Mapped),
+                             Sum_Paired = sum(Prop_Paired),
+                             Mean_Paired = mean(Prop_Paired),
+                             Sum_Mismatch = sum(Mismatch),
+                             Mean_Mismatch = mean(Mismatch)) %>%
+  mutate(K1 = k1_list[df], K2 = k2_list[df], REF = ref_code[df]) %>%
+  select(7:9, 1:6)
+  RefMapStats.flag <- bind_rows(RefMapStats.flag, x)
+}
+
+write_delim(RefMapStats.flag, "results/RefMapStats.flag", delim = "\t")
+
+# create combined data set
+RefMapStats <- left_join(RefMapStats.idx, RefMapStats.flag) # %>%
+
+# write summary stats file
+write_delim(RefMapStats, "results/RefMapStats.txt", delim = "\t")
+
+```
+
+### Evaluate & compare mapping results
+
+Compare number of loci in the reference with no reads mapped to.
+
+```{r fig.height=5, fig.width=20}
+
+RefMapStats <- read_delim("results/RefMapStats.txt", delim = "\t") %>%
+  mutate(REF = ordered(REF, levels = c("21",  "22",  "23",  "24",  "25",  "26",
+                                       "31",  "32",  "33",  "34",  "35",  "36",
+                                       "41",  "42",  "43",  "44",  "45",  "46",
+                                       "51",  "52",  "53",  "54",  "55",  "56",
+                                       "61",  "62",  "63",  "64",  "65",  "66",
+                                       "71",  "72",  "73",  "74",  "75",  "76",
+                                       "81",  "82",  "83",  "84",  "85",  "86",
+                                       "91",  "92",  "93",  "94",  "95",  "96",
+                                       "101", "102", "103", "104", "105", "106"))) %>%
+  mutate(Mill_Mapped = Sum_Mapped/1000000)
+ 
+ggplot(RefMapStats, aes(x = REF, y = Not_Mapped, fill = Mill_Mapped)) +
+  geom_point(shape = 21, size = 3, color = "black") +
+  scale_fill_viridis_c() +
+  labs(x = "reference", y = "empty contigs in ref") +
+  theme_standard +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+
+```
+
+Choosing cut-off values for K1 and K2 are a trade-off between maximizing the number of reads in the reference and the number of reads mapped while minimizing the number of reads that are not mapped as a pair.
+
+```{r choose K1 K2 II, fig.height=6, fig.width=12}
+
+# create tidy data set for plotting
+RefMapStats_tidy <- RefMapStats %>%
+  select(K1, K2, REF, N_Loci_Ref, Mean_Mismatch, Reads_Mapped) %>%
+  gather("MAP_STAT", "READS", Mean_Mismatch:Reads_Mapped)
+
+# calculate 25% and 75% percentile for mismatched and total mapped reads
+MEAN_MISMATCH25 <- unname(quantile(RefMapStats$Mean_Mismatch, 0.25))
+READSMAPPED75 <- unname(quantile(RefMapStats$Reads_Mapped, 0.75))
+LOCI50 <- unname(quantile(RefMapStats$N_Loci_Ref, c(0.5, .75)))
+
+Percentile <- data.frame(MAP_STAT = c('Mean_Mismatch','Reads_Mapped'),
+                      yint = with(RefMapStats_tidy,
+                                  c(MEAN_MISMATCH25, READSMAPPED75)))
+
+# plot indicating lowest & highest 25%
+ggplot(RefMapStats_tidy, aes(x = REF, y = READS)) +
+  geom_point(shape = 21, size = 3, color = "black", fill = "darkorange") +
+  geom_hline(data = Percentile, aes(yintercept = yint),
+             color = "red", linetype = "dashed", size = 1) +
+  facet_grid(MAP_STAT ~ ., scales = "free") +
+  labs(x = "K1/K2 combination",
+       y = "Mean Number of Reads Per Individual") +
+  theme_facet +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+
+```
+
+Reference below the dashed line (25th percentile) for mean number of mismatched paired reads and above the red dashed line (75th percentile) of mean number of reads mapped.
+
+```{r choose K1 K2 HiSeq I, fig.height=6, fig.width=8}
+
+# plot indicating 50 and 75% for number of loci in reference
+RefMapStats_tidy$K1 <- as.character(RefMapStats_tidy$K1)
+RefMapStats_tidy$K2 <- as.character(RefMapStats_tidy$K2)
+
+ggplot(RefMapStats_tidy, aes(x = N_Loci_Ref, y = READS, color = K2, shape = K1)) +
+  geom_point(size = 3) +
+  geom_hline(data = Percentile, aes(yintercept = yint),
+             color = "red", linetype = "dashed", size = 1) +
+  scale_shape_manual(values = c(1, 2, 5, 15, 16, 17, 18, 3, 4)) +
+  scale_color_viridis(discrete = TRUE, option = "C") +
+  facet_grid(MAP_STAT ~ ., scales = "free") +
+  labs(x = "Number of Loci in Reference",
+       y = "Mean Number of Reads Per Individual") +
+  theme_facet
+
+```
+
+### Query SNP calling stats
+
+Query stats
+
+```{bash}
+
+# REF33
+vcftools --vcf data/REF/REF3_3/TotalRawSNPs.vcf --out data/REF/REF3_3/raw --depth
+vcftools --vcf data/REF/REF3_3/TotalRawSNPs.vcf --out data/REF/REF3_3/raw --site-mean-depth
+vcftools --vcf data/REF/REF3_3/TotalRawSNPs.vcf --out data/REF/REF3_3/raw --missing-indv
+vcftools --vcf data/REF/REF3_3/TotalRawSNPs.vcf --out data/REF/REF3_3/raw --missing-site
+vcftools --vcf data/REF/REF3_3/TotalRawSNPs.vcf --out data/REF/REF3_3/raw --site-quality
+
+vcftools --vcf data/REF/REF3_3/TotalRawSNPs.vcf --out data/REF/REF3_3/fil --minQ 20 --mac 3 --minDP 3 --min-meanDP 15 --recode --recode-INFO-all
+
+vcftools --vcf data/REF/REF3_3/fil.recode.vcf --out data/REF/REF3_3/fil --missing-indv
+vcftools --vcf data/REF/REF3_3/fil.recode.vcf --out data/REF/REF3_3/fil --missing-site
+
+# REF52
+vcftools --vcf data/REF/REF5_2/TotalRawSNPs.vcf --out data/REF/REF5_2/raw --depth
+vcftools --vcf data/REF/REF5_2/TotalRawSNPs.vcf --out data/REF/REF5_2/raw --site-mean-depth
+vcftools --vcf data/REF/REF5_2/TotalRawSNPs.vcf --out data/REF/REF5_2/raw --missing-indv
+vcftools --vcf data/REF/REF5_2/TotalRawSNPs.vcf --out data/REF/REF5_2/raw --missing-site
+vcftools --vcf data/REF/REF5_2/TotalRawSNPs.vcf --out data/REF/REF5_2/raw --site-quality
+
+vcftools --vcf data/REF/REF5_2/TotalRawSNPs.vcf --out data/REF/REF5_2/fil --minQ 20 --mac 3 --minDP 3 --min-meanDP 15 --recode --recode-INFO-all
+
+vcftools --vcf data/REF/REF5_2/fil.recode.vcf --out data/REF/REF5_2/fil --missing-indv
+vcftools --vcf data/REF/REF5_2/fil.recode.vcf --out data/REF/REF5_2/fil --missing-site
+
+# REF53
+vcftools --vcf data/REF/REF5_3/TotalRawSNPs.vcf --out data/REF/REF5_3/raw --depth
+vcftools --vcf data/REF/REF5_3/TotalRawSNPs.vcf --out data/REF/REF5_3/raw --site-mean-depth
+vcftools --vcf data/REF/REF5_3/TotalRawSNPs.vcf --out data/REF/REF5_3/raw --missing-indv
+vcftools --vcf data/REF/REF5_3/TotalRawSNPs.vcf --out data/REF/REF5_3/raw --missing-site
+vcftools --vcf data/REF/REF5_3/TotalRawSNPs.vcf --out data/REF/REF5_3/raw --site-quality
+
+vcftools --vcf data/REF/REF5_3/TotalRawSNPs.vcf --out data/REF/REF5_3/fil --minQ 20 --mac 3 --minDP 3 --min-meanDP 15 --recode --recode-INFO-all
+
+vcftools --vcf data/REF/REF5_3/fil.recode.vcf --out data/REF/REF5_3/fil --missing-indv
+vcftools --vcf data/REF/REF5_3/fil.recode.vcf --out data/REF/REF5_3/fil --missing-site
+
+# REF61
+vcftools --vcf data/REF/REF6_1/TotalRawSNPs.vcf --out data/REF/REF6_1/raw --depth
+vcftools --vcf data/REF/REF6_1/TotalRawSNPs.vcf --out data/REF/REF6_1/raw --site-mean-depth
+vcftools --vcf data/REF/REF6_1/TotalRawSNPs.vcf --out data/REF/REF6_1/raw --missing-indv
+vcftools --vcf data/REF/REF6_1/TotalRawSNPs.vcf --out data/REF/REF6_1/raw --missing-site
+vcftools --vcf data/REF/REF6_1/TotalRawSNPs.vcf --out data/REF/REF6_1/raw --site-quality
+
+vcftools --vcf data/REF/REF6_1/TotalRawSNPs.vcf --out data/REF/REF6_1/fil --minQ 20 --mac 3 --minDP 3 --min-meanDP 15 --recode --recode-INFO-all
+
+vcftools --vcf data/REF/REF6_1/fil.recode.vcf --out data/REF/REF6_1/fil --missing-indv
+vcftools --vcf data/REF/REF6_1/fil.recode.vcf --out data/REF/REF6_1/fil --missing-site
+
+# REF63
+vcftools --vcf data/REF/REF6_3/TotalRawSNPs.vcf --out data/REF/REF6_3/raw --depth
+vcftools --vcf data/REF/REF6_3/TotalRawSNPs.vcf --out data/REF/REF6_3/raw --site-mean-depth
+vcftools --vcf data/REF/REF6_3/TotalRawSNPs.vcf --out data/REF/REF6_3/raw --missing-indv
+vcftools --vcf data/REF/REF6_3/TotalRawSNPs.vcf --out data/REF/REF6_3/raw --missing-site
+vcftools --vcf data/REF/REF6_3/TotalRawSNPs.vcf --out data/REF/REF6_3/raw --site-quality
+
+vcftools --vcf data/REF/REF6_3/TotalRawSNPs.vcf --out data/REF/REF6_3/fil --minQ 20 --mac 3 --minDP 3 --min-meanDP 15 --recode --recode-INFO-all
+
+vcftools --vcf data/REF/REF6_3/fil.recode.vcf --out data/REF/REF6_3/fil --missing-indv
+vcftools --vcf data/REF/REF6_3/fil.recode.vcf --out data/REF/REF6_3/fil --missing-site
+
+```
+
+### Evaluate SNP data sets
+
+Missing data
+
+```{r fig.height=15, fig.width=8, message=FALSE, warning=FALSE}
+
+p1 <- read.table("data/REF/REF3_3/raw.imiss", 
+           header = TRUE, stringsAsFactors = FALSE) %>%
+  ggplot() +
+  geom_histogram(aes(x = F_MISS), 
+                 binwidth = 0.1, fill = "darkorange", color = "black") +
+  labs(x = "imiss ref33") +
+  scale_x_continuous(limits = c(0, 0.5))
+
+p10 <- read.table("data/REF/REF3_3/raw.lmiss", 
+           header = TRUE, stringsAsFactors = FALSE) %>%
+  ggplot() +
+  geom_histogram(aes(x = F_MISS), 
+                 binwidth = 0.1, fill = "darkorange", color = "black") +
+  labs(x = "lmiss ref33")
+
+p2 <- read.table("data/REF/REF5_2/raw.imiss", 
+           header = TRUE, stringsAsFactors = FALSE) %>%
+  ggplot() +
+  geom_histogram(aes(x = F_MISS), 
+                 binwidth = 0.1, fill = "darkorange", color = "black") +
+  labs(x = "imiss ref52") +
+  scale_x_continuous(limits = c(0, 0.5))
+
+p11 <- read.table("data/REF/REF5_2/raw.lmiss", 
+           header = TRUE, stringsAsFactors = FALSE) %>%
+  ggplot() +
+  geom_histogram(aes(x = F_MISS), 
+                 binwidth = 0.1, fill = "darkorange", color = "black") +
+  labs(x = "lmiss ref52")
+
+p3 <- read.table("data/REF/REF5_3/raw.imiss", 
+           header = TRUE, stringsAsFactors = FALSE) %>%
+  ggplot() +
+  geom_histogram(aes(x = F_MISS), 
+                 binwidth = 0.1, fill = "darkorange", color = "black") +
+  labs(x = "imiss ref53") +
+  scale_x_continuous(limits = c(0, 0.5))
+
+p12 <- read.table("data/REF/REF5_3/raw.lmiss", 
+           header = TRUE, stringsAsFactors = FALSE) %>%
+  ggplot() +
+  geom_histogram(aes(x = F_MISS), 
+                 binwidth = 0.1, fill = "darkorange", color = "black") +
+  labs(x = "lmiss ref53")
+
+p4 <- read.table("data/REF/REF6_1/raw.imiss", 
+           header = TRUE, stringsAsFactors = FALSE) %>%
+  ggplot() +
+  geom_histogram(aes(x = F_MISS), 
+                 binwidth = 0.1, fill = "darkorange", color = "black") +
+  labs(x = "imiss ref61") +
+  scale_x_continuous(limits = c(0, 0.5))
+
+p13 <- read.table("data/REF/REF6_1/raw.lmiss", 
+           header = TRUE, stringsAsFactors = FALSE) %>%
+  ggplot() +
+  geom_histogram(aes(x = F_MISS), 
+                 binwidth = 0.1, fill = "darkorange", color = "black") +
+  labs(x = "lmiss ref61")
+
+p5 <- read.table("data/REF/REF6_3/raw.imiss", 
+           header = TRUE, stringsAsFactors = FALSE) %>%
+  ggplot() +
+  geom_histogram(aes(x = F_MISS), 
+                 binwidth = 0.1, fill = "darkorange", color = "black") +
+  labs(x = "imiss ref63") +
+  scale_x_continuous(limits = c(0, 0.5))
+
+p14 <- read.table("data/REF/REF6_3/raw.lmiss", 
+           header = TRUE, stringsAsFactors = FALSE) %>%
+  ggplot() +
+  geom_histogram(aes(x = F_MISS), 
+                 binwidth = 0.1, fill = "darkorange", color = "black") +
+  labs(x = "lmiss ref63")
+
+multiplot(p1, p2, p3, p4, p5, p10, p11, p12, p13, p14, cols = 2)
+
+```
+
+Missing data after filtering
+
+```{r fig.height=15, fig.width=8, message=FALSE, warning=FALSE}
+
+p1 <- read.table("data/REF/REF3_3/fil.imiss", 
+           header = TRUE, stringsAsFactors = FALSE) %>%
+  ggplot() +
+  geom_histogram(aes(x = F_MISS), 
+                 binwidth = 0.1, fill = "darkorange", color = "black") +
+  labs(x = "imiss ref33")
+
+p10 <- read.table("data/REF/REF3_3/fil.lmiss", 
+           header = TRUE, stringsAsFactors = FALSE) %>%
+  ggplot() +
+  geom_histogram(aes(x = F_MISS), 
+                 binwidth = 0.1, fill = "darkorange", color = "black") +
+  labs(x = "lmiss ref33")
+
+p2 <- read.table("data/REF/REF5_2/fil.imiss", 
+           header = TRUE, stringsAsFactors = FALSE) %>%
+  ggplot() +
+  geom_histogram(aes(x = F_MISS), 
+                 binwidth = 0.1, fill = "darkorange", color = "black") +
+  labs(x = "imiss ref52")
+
+p11 <- read.table("data/REF/REF5_2/fil.lmiss", 
+           header = TRUE, stringsAsFactors = FALSE) %>%
+  ggplot() +
+  geom_histogram(aes(x = F_MISS), 
+                 binwidth = 0.1, fill = "darkorange", color = "black") +
+  labs(x = "lmiss ref52")
+
+p3 <- read.table("data/REF/REF5_3/fil.imiss", 
+           header = TRUE, stringsAsFactors = FALSE) %>%
+  ggplot() +
+  geom_histogram(aes(x = F_MISS), 
+                 binwidth = 0.1, fill = "darkorange", color = "black") +
+  labs(x = "imiss ref53")
+
+p12 <- read.table("data/REF/REF5_3/fil.lmiss", 
+           header = TRUE, stringsAsFactors = FALSE) %>%
+  ggplot() +
+  geom_histogram(aes(x = F_MISS), 
+                 binwidth = 0.1, fill = "darkorange", color = "black") +
+  labs(x = "lmiss ref53")
+
+p4 <- read.table("data/REF/REF6_1/fil.imiss", 
+           header = TRUE, stringsAsFactors = FALSE) %>%
+  ggplot() +
+  geom_histogram(aes(x = F_MISS), 
+                 binwidth = 0.1, fill = "darkorange", color = "black") +
+  labs(x = "imiss ref61")
+
+p13 <- read.table("data/REF/REF6_1/fil.lmiss", 
+           header = TRUE, stringsAsFactors = FALSE) %>%
+  ggplot() +
+  geom_histogram(aes(x = F_MISS), 
+                 binwidth = 0.1, fill = "darkorange", color = "black") +
+  labs(x = "lmiss ref61")
+
+p5 <- read.table("data/REF/REF6_3/fil.imiss", 
+           header = TRUE, stringsAsFactors = FALSE) %>%
+  ggplot() +
+  geom_histogram(aes(x = F_MISS), 
+                 binwidth = 0.1, fill = "darkorange", color = "black") +
+  labs(x = "imiss ref63")
+
+p14 <- read.table("data/REF/REF6_3/fil.lmiss", 
+           header = TRUE, stringsAsFactors = FALSE) %>%
+  ggplot() +
+  geom_histogram(aes(x = F_MISS), 
+                 binwidth = 0.1, fill = "darkorange", color = "black") +
+  labs(x = "lmiss ref63")
+
+multiplot(p1, p2, p3, p4, p5, p10, p11, p12, p13, p14, cols = 2)
+
+```
+
+Depth data (raw)
+
+```{r fig.height=15, fig.width=8, message=FALSE, warning=FALSE}
+
+p1 <- read.table("data/REF/REF3_3/raw.idepth", 
+           header = TRUE, stringsAsFactors = FALSE) %>%
+  ggplot() +
+  geom_histogram(aes(x = MEAN_DEPTH), 
+                 binwidth = 10, fill = "darkorange", color = "black") +
+  labs(x = "idepth ref33")
+
+p10 <- read.table("data/REF/REF3_3/raw.ldepth.mean", 
+           header = TRUE, stringsAsFactors = FALSE) %>%
+  ggplot() +
+  geom_histogram(aes(x = MEAN_DEPTH), 
+                 binwidth = 20, fill = "darkorange", color = "black") +
+  labs(x = "ldepth ref33")
+
+p2 <- read.table("data/REF/REF5_2/raw.idepth", 
+           header = TRUE, stringsAsFactors = FALSE) %>%
+  ggplot() +
+  geom_histogram(aes(x = MEAN_DEPTH), 
+                 binwidth = 10, fill = "darkorange", color = "black") +
+  labs(x = "idepth ref52")
+
+p11 <- read.table("data/REF/REF5_2/raw.ldepth.mean", 
+           header = TRUE, stringsAsFactors = FALSE) %>%
+  ggplot() +
+  geom_histogram(aes(x = MEAN_DEPTH), 
+                 binwidth = 20, fill = "darkorange", color = "black") +
+  labs(x = "ldepth ref52")
+
+p3 <- read.table("data/REF/REF5_3/raw.idepth", 
+           header = TRUE, stringsAsFactors = FALSE) %>%
+  ggplot() +
+  geom_histogram(aes(x = MEAN_DEPTH), 
+                 binwidth = 10, fill = "darkorange", color = "black") +
+  labs(x = "idepth ref53")
+
+p12 <- read.table("data/REF/REF5_3/raw.ldepth.mean", 
+           header = TRUE, stringsAsFactors = FALSE) %>%
+  ggplot() +
+  geom_histogram(aes(x = MEAN_DEPTH), 
+                 binwidth = 20, fill = "darkorange", color = "black") +
+  labs(x = "ldepth ref53")
+
+p4 <- read.table("data/REF/REF6_1/raw.idepth", 
+           header = TRUE, stringsAsFactors = FALSE) %>%
+  ggplot() +
+  geom_histogram(aes(x = MEAN_DEPTH), 
+                 binwidth = 10, fill = "darkorange", color = "black") +
+  labs(x = "idepth ref61")
+
+p13 <- read.table("data/REF/REF6_1/raw.ldepth.mean", 
+           header = TRUE, stringsAsFactors = FALSE) %>%
+  ggplot() +
+  geom_histogram(aes(x = MEAN_DEPTH), 
+                 binwidth = 20, fill = "darkorange", color = "black") +
+  labs(x = "ldepth ref61")
+
+p5 <- read.table("data/REF/REF6_3/raw.idepth", 
+           header = TRUE, stringsAsFactors = FALSE) %>%
+  ggplot() +
+  geom_histogram(aes(x = MEAN_DEPTH), 
+                 binwidth = 10, fill = "darkorange", color = "black") +
+  labs(x = "idepth ref63")
+
+p14 <- read.table("data/REF/REF6_3/raw.ldepth.mean", 
+           header = TRUE, stringsAsFactors = FALSE) %>%
+  ggplot() +
+  geom_histogram(aes(x = MEAN_DEPTH), 
+                 binwidth = 20, fill = "darkorange", color = "black") +
+  labs(x = "ldepth ref63")
+
+multiplot(p1, p2, p3, p4, p5, p10, p11, p12, p13, p14, cols = 2)
+
+```
+
+SNP call quality
+
+```{r}
+
+read.table("data/REF/REF3_3/raw.lqual",
+                    header = TRUE, stringsAsFactors = FALSE) %>%
+  count(QUAL > 20)
+
+# 53%
+# 154,110
+# 50,463
+
+read.table("data/REF/REF5_2/raw.lqual",
+                    header = TRUE, stringsAsFactors = FALSE) %>%
+  count(QUAL > 20)
+
+# 54%
+# 146,224
+# 50,648
+
+read.table("data/REF/REF5_3/raw.lqual",
+                    header = TRUE, stringsAsFactors = FALSE) %>%
+  count(QUAL > 20)
+
+# 55%%
+# 133,868
+# 49,962
+
+read.table("data/REF/REF6_1/raw.lqual",
+                    header = TRUE, stringsAsFactors = FALSE) %>%
+  count(QUAL > 20)
+
+# 52%%
+# 160,927
+# 50,446
+
+read.table("data/REF/REF6_3/raw.lqual",
+                    header = TRUE, stringsAsFactors = FALSE) %>%
+  count(QUAL > 20)
+
+# 56%
+# 125,843
+# 49,679
+
+```
+
+
+# Finalize *de nov* reference cut-offs:
+
+Values chosen for MiSeq Reference:
+
+* **c** = 0.8
+* **K1** = 5
+* **K2** = 2
+
+Get sequence length for all reference contigs
+
+```{bash}
+
+cat data/REF/REF5_2/reference.fasta | awk '$0 ~ ">" {print c; c=0;printf substr($0,2,100) "\t"; } $0 !~ ">" {c+=length($0);} END { print c; }' > results/fasta.length
+
+```
+
+Import and analyze to get summary stats
+
+```{r}
+
+ref_stats <- read_delim("results/fasta.length", delim = "\t",
+                        col_names = c("CONTIG", "LENGTH"))
+
+sum(ref_stats$LENGTH)
+
+length(ref_stats$CONTIG)
+
+mean(ref_stats$LENGTH)
+
+Mode(ref_stats$LENGTH)
+
+min(ref_stats$LENGTH)
+
+```

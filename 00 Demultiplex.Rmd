@@ -1,0 +1,512 @@
+---
+title: "Demultiplex Sequences Gafftops"
+output:
+  html_notebook:
+    code_folding: hide
+    df_print: paged
+    highlight: kate
+    theme: flatly
+    toc: yes
+  html_document:
+    toc: yes
+---
+
+```{r load libraries, message=FALSE, warning=FALSE}
+
+knitr::opts_chunk$set(warning = FALSE, message = FALSE)
+
+# # Install `SimRAD` and dependencies of not yet installed on server
+# 
+# # Install BiocManager to install from Bioconductor
+# if (!requireNamespace("BiocManager", quietly = TRUE))
+#     install.packages("BiocManager")
+# 
+# # Biostrings
+# BiocManager::install("Biostrings")
+# 
+# # ShortRead
+# BiocManager::install("ShortRead")
+# 
+# # zlibbioc
+# BiocManager::install("zlibbioc")
+# 
+# # SimRAD
+# install.packages("SimRAD")
+
+library(SimRAD)
+
+# load libraries
+source("scr/libraries.R")
+
+# load functions
+source("scr/ggplot.R")
+source("scr/VCFfilterstats.R")
+source("scr/HaplotypR.R")
+source("scr/xtrafunctions.R")
+source("scr/genind.R")
+
+# other settings =====
+
+# set how numbers are printed
+options(scipen=999)
+
+```
+
+# Demultiplex sequences and Assess number of reads
+
+## Estimate expected number of fragments and reads per individuals
+
+### Estimate using probability of cut sites and fragment sizes
+
+```{r}
+
+# set enzyme parameters
+EcoRI <- c("G", "A", "A", "T", "T", "C")
+
+MspI <- c("C", "C", "G", "G")
+
+GC <- 40
+
+# set fragment parameters
+frag_min <- 338
+
+frag_max <- 412
+
+# set genome parameters (genomesize.com)
+c <- 2.4
+
+# set target coverage
+cov_target <- 20
+
+# set number of individuals per library/sequencing lane
+nInd <- 172
+
+# account for PhiX spike to use up certain number of reads
+PhiX <- 10
+
+```
+
+Assuming a GC content of `r GC`, the probability of a base being a given nucleotide can be caculated as 1/2 of the %-GC content for a C or G (i.e. `r 0.5*GC/100`) and as 1/2 of the %-AT content (`r 0.5*(100-GC)/100`). Based on the number and type of bases in the cut site recogniztion the cut frequency can be calculated as $2^{n(GC)}*2^{n(AT)}$. 
+
+```{r}
+
+# calculate cut frequency for G and C
+cutGC <- 0.5*(GC/100)
+
+# calcuate cut frequency for A and T
+cutAT <- 0.5*((100-GC)/100)
+
+# cut frequency enzyme 1 (EcoRI) ----
+
+# number of G/C in cut site
+nGC <- as.numeric(sum(EcoRI == "G") + sum(EcoRI == "C"))
+
+# number of A/T in cut site
+nAT <- as.numeric(sum(EcoRI == "A") + sum(EcoRI == "T"))
+
+frq1 <- cutGC^nGC*cutAT^nAT
+
+
+# cut frequency enzyme 2 (MspI) ----
+
+# number of G/C in cut site
+nGC <- as.numeric(sum(MspI == "G") + sum(MspI == "C"))
+
+# number of A/T in cut site
+nAT <- as.numeric(sum(MspI == "A") + sum(MspI == "T"))
+
+frq2 <- cutGC^nGC*cutAT^nAT
+
+# frequency both enzyme cuts given the width of the selection window ----
+frq3 <- frq1*frq2*(frag_max-frag_min)
+
+```
+
+The reciprocal indicate every how many base pairs the enzyme can be expected to cut, i.e. on average EcoRI will cut every `r 1/frq1` and MspI every `r 1/frq2` bases. The frequency of getting fragments with both cut sites is the product of the two frequencies, which needs to be multiplied with the width of the selection window (wider window should select more fragments), i.e. for a ddRAD protocol using EcoRI and MsPI and we should get a fragment in the selection window of 338 - 412bp (`r frag_max-frag_min` bp wide) of `r 1/(frq1*frq2*(frag_max-frag_min))` bp.
+
+The expected genome size can be calculated based on a c-value for a genome, e.g. for red drum (c-value = 0.98) the genome is expected to be `r c*978` Mbp.
+
+```{r}
+
+# genome size
+genome <- c*978
+
+# expected number of cuts
+cuts <- genome*1000000/(1/frq3)
+
+# expected loci (if using only 1 enzyme would expect 2 loci per cut)
+RADloc <- cuts*1
+
+```
+
+Leading to an expected number of `r RADloc` RAD loci per individual. For a targeted coverage of 20 reads per locus, a total of `r RADloc*cov_target/1000000` Million reads are needed per individual.
+
+```{r}
+
+perInd <- RADloc*cov_target
+
+```
+
+Currently, one Illumina HiSeq 4000 lane produces approx. 300 Million reads, `r PhiX`% reads are budgeted for PhiX spike in to diversify nucleotides for better results.
+
+```{r}
+
+tot_reads <- 300000000
+
+PhiX_reads <- 300000000*.1
+
+reads_per_ind <- (tot_reads-PhiX_reads)/nInd
+
+```
+
+The expected number of reads per individuals is `r round(reads_per_ind/1000000, digits = 2)` Million.
+
+
+### Estimate expected number of fragments using in silico digestions of genome
+
+`SimRAD` will perform in silico digestions & size selection for simulated and sequenced reference genomes to estimate the expected number of fragments per individual. Use a simulated genome for digestion & fragment selection.
+
+Simulate genome for an estimated size of `r c*978`Mbp and `GC`% GC-content and digest using EcoRI and MsPI for a window of `r frag_min` and `r frag_max`.
+
+Gafftops have large genome (approx 2.4 Gb) so estimate genome of 25% of actual size for faster computation.
+
+```{r message=FALSE, warning=FALSE}
+
+# simulate genome
+DNAseq<- sim.DNAseq(size = (genome*1000000)*0.25, GC = 0.4)
+
+# define cut sites
+EcoR1_5p1 <- "G"     # 5' side of cut site
+EcoR1_3p1 <- "AATTC" # 3' side of cut site  
+
+MspI_5p2 <- "C"      # 5' side of cut site
+MspI_3p2 <-"CGG"     # 3' side of cut site
+
+# digest simulated genome
+Sim <- insilico.digest(DNAseq, EcoR1_5p1, EcoR1_3p1, MspI_5p2, MspI_3p2, verbose = TRUE) 
+
+```
+
+Select fragments with both cut sites, and determine number of fragments between `r frag_min` and `r frag_max`.
+
+```{r message=FALSE, warning=FALSE}
+
+# select fragments w/both cut sites
+AS <- adapt.select(Sim, type="AB+BA", EcoR1_5p1, EcoR1_3p1, MspI_5p2, MspI_3p2) 
+
+# size select
+size_select <-size.select(AS, min.size = frag_min, max.size = frag_max, graph = TRUE, verbose = FALSE)
+
+```
+
+Expected number of loci is `r 4*21729`.
+
+Currently, one Illumina HiSeq 4000 lane produces approx. 300 Million reads, `r PhiX`% reads are budgeted for PhiX spike in to diversify nucleotides for better results.
+
+```{r}
+
+tot_reads <- 300000000
+
+PhiX_reads <- 300000000*.1
+
+reads_per_ind <- (tot_reads-PhiX_reads)/nInd
+
+```
+
+Resulting in `r reads_per_ind` reads per individual (240 individuals in a lane), over 80,000 loci this would mean a `r reads_per_ind/80000` coverage.
+
+## Sequence data
+
+### Demultiplex HiSeq data to identify individuals for reference construction
+
+#### Demultiplex BMA-1
+
+Demultiplex using only single enzyme.
+
+```{bash demultiplex BMA-1, eval=FALSE, include=FALSE}
+
+# create demultiplexed sequence folder
+mkdir /home/soleary/GAFFTOPS/BMA_POPGEN/data/SEQ/BMA-1
+cd /home/soleary/GAFFTOPS/BMA_POPGEN/data/SEQ/BMA-1
+
+# demultiplex files
+demultiplex.pl -i Demultiplex_BMA-1.txt -o Extract_BMA-1.sh -e1 ecoRI -p /home/soleary/GAFFTOPS/BMA_POPGEN/data/SEQ/BMA-1 -d /home/DATA/GAFFTOPS/BMA1
+chmod 755 Extract_BMA-1.sh
+./Extract_BMA-1.sh
+
+# delete unnecessary files generated during demultiplexing
+rm sample*
+rm dumper.out
+# move log files to SEQ folder
+cp CAGATC_radtags.log /home/soleary/GAFFTOPS/BMA_POPGEN/data/SEQ/BMA1_CAGATC_radtags.log
+cp CGATGT_radtags.log /home/soleary/GAFFTOPS/BMA_POPGEN/data/SEQ/BMA1_CGATGT_radtags.log
+cp GGCTAC_radtags.log /home/soleary/GAFFTOPS/BMA_POPGEN/data/SEQ/BMA1_GGCTAC_radtags.log
+cp TAGCTT_radtags.log /home/soleary/GAFFTOPS/BMA_POPGEN/data/SEQ/BMA1_TAGCTT_radtags.log
+cp TGACCA_radtags.log /home/soleary/GAFFTOPS/BMA_POPGEN/data/SEQ/BMA1_TGACCA_radtags.log
+cp Demultiplex_BMA-1.txt /home/soleary/GAFFTOPS/BMA_POPGEN/data/SEQ/
+
+```
+
+#### Demultiplex BMA-2
+
+Demultiplex using only single enzyme.
+
+```{bash demultiplex BMA-2, eval=FALSE, include=FALSE}
+
+# create demultiplexed sequence folder
+mkdir /home/soleary/GAFFTOPS/data/SEQ/BMA-2
+cd /home/soleary/GAFFTOPS/BMA_POPGEN/data/SEQ/BMA-2
+
+# demultiplex files
+demultiplex.pl -i Demultiplex_BMA-2.txt -o Extract_BMA-2.sh -e1 ecoRI -p /home/soleary/GAFFTOPS/BMA_POPGEN/data/SEQ/BMA-2 -d /home/DATA/GAFFTOPS/BMA2
+chmod 755 Extract_BMA-2.sh
+./Extract_BMA-2.sh
+
+# delete unnecessary files generated during demultiplexing
+rm sample*
+rm dumper.out
+# move log files to SEQ folder
+cp CAGATC_radtags.log /home/soleary/GAFFTOPS/BMA_POPGEN/data/SEQ/BMA2_CAGATC_radtags.log
+cp CGATGT_radtags.log /home/soleary/GAFFTOPS/BMA_POPGEN/data/SEQ/BMA2_CGATGT_radtags.log
+cp GGCTAC_radtags.log /home/soleary/GAFFTOPS/BMA_POPGEN/data/SEQ/BMA2_GGCTAC_radtags.log
+cp TAGCTT_radtags.log /home/soleary/GAFFTOPS/BMA_POPGEN/data/SEQ/BMA2_TAGCTT_radtags.log
+cp TGACCA_radtags.log /home/soleary/GAFFTOPS/BMA_POPGEN/data/SEQ/BMA2_TGACCA_radtags.log
+cp Demultiplex_BMA-2.txt /home/soleary/GAFFTOPS/BMA_POPGEN/data/SEQ/
+
+```
+
+#### Demultiplex BMA-3
+
+Demultiplex using only single enzyme.
+
+```{bash demultiplex BMA-3, eval=FALSE, include=FALSE}
+
+# create demultiplexed sequence folder
+mkdir /home/soleary/GAFFTOPS/data/SEQ/BMA-3
+cd /home/soleary/GAFFTOPS/BMA_POPGEN/data/SEQ/BMA-3
+
+# demultiplex files
+demultiplex.pl -i Demultiplex_BMA-3.txt -o Extract_BMA-3.sh -e1 ecoRI -p /home/soleary/GAFFTOPS/BMA_POPGEN/data/SEQ/BMA-3 -d /home/DATA/GAFFTOPS/BMA3
+chmod 755 Extract_BMA-3.sh
+./Extract_BMA-3.sh
+
+
+# delete unnecessary files generated during demultiplexing
+rm sample*
+rm dumper.out
+# move log files to SEQ folder
+cp CAGATC_radtags.log /home/soleary/GAFFTOPS/BMA_POPGEN/data/SEQ/BMA3_CAGATC_radtags.log
+cp CGATGT_radtags.log /home/soleary/GAFFTOPS/BMA_POPGEN/data/SEQ/BMA3_CGATGT_radtags.log
+cp GGCTAC_radtags.log /home/soleary/GAFFTOPS/BMA_POPGEN/data/SEQ/BMA3_GGCTAC_radtags.log
+cp TAGCTT_radtags.log /home/soleary/GAFFTOPS/BMA_POPGEN/data/SEQ/BMA3_TAGCTT_radtags.log
+cp TGACCA_radtags.log /home/soleary/GAFFTOPS/BMA_POPGEN/data/SEQ/BMA3_TGACCA_radtags.log
+cp Demultiplex_BMA-3.txt /home/soleary/GAFFTOPS/BMA_POPGEN/data/SEQ/
+
+```
+
+### Demultiplex stats
+
+Parse process radtags log file.
+
+```{r parse process radtags, message=FALSE, warning=FALSE}
+
+# IMPORT BARCODE & INDEX FOR EACH SAMPLE USING DEMULTIPLEX FILES ----
+
+# all demultiplex files named Demultiplex_SP-COD-LibNo.txt
+# list all demultiplex files
+d <- list.files(path = "data/SEQ", pattern = "Demultiplex*")
+
+# directory with demultiplex files
+dir <- "data/SEQ"
+
+# create empty list
+barcodes <- list()
+  
+# import all demultiplex files
+for (i in 1:length(d)){
+  
+  lib <- d[[i]] %>%
+    str_sub(13, -5) %>%
+    sub(pattern = "-", replacement = "")
+  
+  f <- file.path(dir, d[[i]]) 
+  
+  barcodes[[i]] <- read_delim(f, delim = "\t", col_names = c("SAMPLE", "BARCODE", "INDEX")) %>%
+    mutate(LIBRARY = lib)
+}
+# create single data frame
+barcodes <- ldply(barcodes, data.frame)
+
+
+# IMPORT READS PER SAMPLE USING PROCESS RADTAGS LOG FILES ----
+
+# all logs named LIBCODE_INDEX_radtags.log
+# directory with radtag logs
+dir <- "data/SEQ"
+
+# list all radtag logs
+logs <- list.files(path = "data/SEQ", pattern = "*radtags.log")
+
+# create empty list
+l <- list()
+
+# number of samples in each index
+n_samples <- 48
+
+i <- 2
+
+# read in your logs
+for (i in 1:length(logs)){
+  
+  f <- file.path(dir, logs[[i]]) 
+  
+  name <- logs[[i]] %>%
+    str_split_fixed(pattern = "_", n = 3)
+  
+  index <- name[[2]]
+  lib <- name[[1]]
+  
+  demultiplex <- barcodes %>%
+    filter(LIBRARY == lib) %>%
+    select(-LIBRARY)
+  
+  l[[i]] <- read_table2(f,
+                        skip = 13, n_max = n_samples,
+                        col_names = c("BARCODE", "TOTAL_READS", "AMBIG_READS", "LQ_READS", "RETAINED")) %>%
+        mutate(PROP_RETAINED = RETAINED/TOTAL_READS,
+               INDEX = index,
+               LIBRARY = lib) %>%
+        select(LIBRARY, INDEX, BARCODE, PROP_RETAINED, TOTAL_READS, RETAINED, AMBIG_READS, LQ_READS) %>%
+        left_join(demultiplex)
+  
+}
+# create single data frame
+radtagslog <- ldply(l, data.frame) %>%
+  select(-LQ_READS) %>%
+  unite(LIB_IDX, LIBRARY, INDEX, sep = "_", remove = FALSE)
+
+write_delim(radtagslog, "results/all.radtags.log")
+
+```
+
+Compare demultiplexed reads per library & index.
+
+Plot distributions of total and proportion of retained reads.
+
+```{r plot reads, fig.height=15, fig.width=6, message=TRUE, warning=TRUE}
+
+radtagslog %>%
+  filter(!str_detect(SAMPLE, 'BLANK')) %>%
+  mutate(MILL_RETAINED = RETAINED/1000000) %>%
+  select(LIB_IDX, LIBRARY, INDEX, BARCODE, PROP_RETAINED, MILL_RETAINED) %>%
+  gather(key = STAT, value = READS, 5:6) %>%
+  ggplot(aes(x = READS)) +
+  geom_histogram(color = "black", fill = "darkorange") +
+  labs(x = "reads") +
+  facet_grid(LIB_IDX ~ STAT, scales = "free") +
+  theme_standard
+
+```
+
+Assess relationship between proportion and number of reads retained.
+
+```{r}
+
+radtagslog %>%
+  mutate(BLANK = ifelse(str_detect(SAMPLE, 'BLANK'), "BLANK", "SAMPLE"),
+         MILL_RETAINED = RETAINED/1000000) %>%
+  ggplot() +
+  geom_point(aes(x = MILL_RETAINED, y = PROP_RETAINED, fill = BLANK),
+             shape = 21, color = "black", alpha = 0.5, size = 2) +
+  scale_fill_viridis_d() +
+  labs(x = "million retained reads", y = "proportion retained") +
+  theme_standard
+
+```
+
+
+Compare number of reads per sample.
+
+```{r fig.height=6, fig.width=8}
+
+# remove blanks from samples before plotting
+radtagslog %>%
+  filter(!str_detect(SAMPLE, 'BLANK')) %>%
+  mutate(MILL_RETAINED = RETAINED/1000000) %>%
+  ggplot() +
+  geom_boxplot(aes(y = MILL_RETAINED, x = LIB_IDX), color = "black", fill = "darkorange", size = 1) +
+  labs(x = "million retained reads", y = "") +
+  theme_standard +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+
+```
+
+HiSeq4000 yeilds approx. 280-330 million reads per lane (including 1% PhiX spike). Rough calculation of genome with c-value 2.4Gb should yield  80-90,000 fragments in the selected size window per sample for two cut-sites (EcoRI, MspI). 
+
+For approx 152 individuals per lane, each individual should get around 1.9 Million reads.
+
+Quantiles of retained reads per sample (without blanks)
+
+```{r}
+
+temp <- radtagslog %>%
+  filter(!str_detect(SAMPLE, 'BLANK'))
+
+quantile(temp$RETAINED, probs = c(0.001, 0.01, 0.05, 0.10, 0.5, 0.75, 0.9))
+
+```
+
+## Quality trim
+
+### Remove low quality individuals
+
+To cut down on computational power blanks and individuals with very low number of reads can be removed.
+
+Identify low quality individuals.
+
+```{r}
+
+lq_ind <- radtagslog %>%
+  filter(str_detect(SAMPLE, 'BLANK') | RETAINED < 50000 | PROP_RETAINED < 0.65)
+
+```
+
+Write bash script to delete `fastq` files of low quality individuals.
+
+```{r}
+
+seq_dir <- "/home/soleary/GAFFTOPS/BMA_POPGEN/data/SEQ/"
+
+command <- "rm"
+SEQ <- lq_ind %>%
+  separate(LIBRARY, into = c("t1", "t2"), sep = 3) %>%
+  unite(LIBRARY, t1, t2, sep = "-") %>%
+  unite(FILE, LIBRARY, SAMPLE, sep = "/") %>%
+  select(FILE) %>%
+  mutate(temp = ".*",
+         dir = seq_dir) %>%
+  unite(SEQ, dir, FILE, temp, sep = "") %>%
+  mutate(COMMAND = command) %>%
+  select(COMMAND, SEQ)
+
+write.table(SEQ, "scr/rm_LQind_BMA.sh", 
+            col.names = FALSE, quote = FALSE, row.names = FALSE)
+
+```
+
+Remove files
+
+```{bash}
+
+chmod 755 ./scr/rm_LQind_BMA.sh
+
+./scr/rm_LQind_BMA.sh
+
+```
+
+
+### Quality trim data
+
+`dDocent` uses Trimmomatic to quality trim the data - this only needs to occur once. Low quality bases (< 20) are trimmed from beginning/end of reads. Additionally, bases are trimmed when average quality drops below 5 in a sliding window (5bp). The quality trimmed files are needed for further steps in `dDocent` (`*.R1.fq` and `*.R2.fq`)
+
+Run `dDocent` in each sequence folder to quality trim reads.
