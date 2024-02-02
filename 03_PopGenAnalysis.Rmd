@@ -115,7 +115,7 @@ est_col <- c("#375623",
              "gold",
              "grey75")
 
-pops <- c("FLA", 
+pops <- c("ATL", 
           "FLGS", "FLGN", 
           "MB", "MISS", "CS", "LA", 
           "CC", 
@@ -134,6 +134,8 @@ col_regs <- c("chartreuse4", "dodgerblue4", "#8c0b0b", "#ff038b", "purple3")
 oce <- c("ATL", "GULF")
 
 col_oce <- c("#0057E7", "#FFA700")
+
+col_clust <- c("#442288", "#6CA2EA", "#B5D33D", "#FED23F", "#EB7D5B")
 
 
 # LOAD & FORMAT DATA SET ====
@@ -155,18 +157,22 @@ strata <- left_join(Inds, SampleInfo) %>%
   distinct() %>%
   mutate(POP = ordered(POP, levels = pops)) %>%
   mutate(ESTUARY = ordered(ESTUARY, levels = est_levels),
-         REGION = case_when(POP %in% c("FLA") ~ "SWATL",
+         REGION = case_when(POP %in% c("ATL") ~ "SWATL",
                             POP %in% c("CAMP") ~ "SGULF",
                             POP %in% c("FLGS", "FLGN") ~ "EGULF",
                             POP %in% c("MB", "MISS", "CS", "LA") ~ "CGULF",
                             POP %in% c("CC") ~ "WGULF",),
          REGION = ordered(REGION, levels = reg),
-         OCEAN = ifelse(POP == "FLA", "ATL", "GULF"))
+         OCEAN = ifelse(POP == "ATL", "ATL", "GULF"))
 
 strata(gen) <- strata
 
 # define populations using defined stratification
 setPop(gen) <- ~POP
+
+
+# set seed for reproducibility
+set.seed(42)
 
 ```
 
@@ -222,7 +228,7 @@ Sample distribution by putative population, geographic region, and ocean basin.
 
 kable(
   count(strata, POP),
-  caption = "Number of sample per putative population, Florida Atlantic (FLA), South and North Florida (FLGS, FLGN), Alabama (MB), Mississippi (MISS), Louisiana (CS, LA), Texas (CC), and Campeche (SG)."
+  caption = "Number of sample per putative population, Florida Atlantic (ATL), South and North Florida (FLGS, FLGN), Alabama (MB), Mississippi (MISS), Louisiana (CS, LA), Texas (CC), and Campeche (SG)."
 )
 
 
@@ -1751,7 +1757,7 @@ K-means clustering can be used for model-free clustering based on similarity to 
 
 Use k-means clustering to identify clusters based on genetic similarity (data transformed using PCA). For clustering it is appropriate to retain all PCs (all variance in the data set), as overfitting is not an issue.
 
-```{r fig.cap="Fig 1: AIC for data clustered into K = 1 - 40 groups using k-means clustering.", fig.height=4, fig.width=7}
+```{r fig.cap="Fig 1: AIC for data clustered into K = 1 - 10 groups using k-means clustering.", fig.height=4, fig.width=7}
 
 # k-means clustering
 grp_AIC <- find.clusters.genind(gen_o, n.pca = 500, method = "kmeans",
@@ -1874,8 +1880,8 @@ for (k in range){
                                     aes(x = LIB_ID, y = MEMBSHIP, fill = GRP, color = GRP)) +
       geom_bar(stat = "identity") +
       facet_grid(. ~ POP, scales = "free", space = "free") +
-      scale_fill_viridis_d() +
-      scale_color_viridis_d()+
+      scale_fill_manual(values = col_clust) +
+      scale_color_manual(values = col_clust) +
       labs(x = "INDV", y = "memb. prob") +
       theme_standard +
       theme(axis.text.x = element_blank(),
@@ -1919,7 +1925,7 @@ Individuals are grouped within sample locations in individuals panels as `r knit
 
 Use k-means clustering to identify clusters based on genetic similarity (data transformed using PCA). For clustering it is appropriate to retain all PCs (all variance in the data set), as overfitting is not an issue.
 
-```{r fig.cap="Fig 1: AIC for data clustered into K = 1 - 40 groups using k-means clustering.", fig.height=4, fig.width=7}
+```{r fig.cap="Fig 1: AIC for data clustered into K = 1 - 10 groups using k-means clustering.", fig.height=4, fig.width=7}
 
 # k-means clustering
 grp_AIC <- find.clusters.genind(gen_nn, n.pca = 500, method = "kmeans",
@@ -2042,8 +2048,8 @@ for (k in range){
                                     aes(x = LIB_ID, y = MEMBSHIP, fill = GRP, color = GRP)) +
       geom_bar(stat = "identity") +
       facet_grid(. ~ POP, scales = "free", space = "free") +
-      scale_fill_viridis_d() +
-      scale_color_viridis_d()+
+      scale_fill_manual(values = col_clust) +
+      scale_color_manual(values = col_clust) +
       labs(x = "INDV", y = "memb. prob") +
       theme_standard +
       theme(axis.text.x = element_blank(),
@@ -2572,7 +2578,7 @@ het <- read_delim("results/gendiv.locstats", delim = "\t") %>%
   select(GRP, LOCUS, Hs) %>%
   filter(GRP %in% pops) %>%
   mutate(GRP = ordered(GRP, levels = pops),
-         REGION = case_when(GRP %in% c("FLA") ~ "SWATL",
+         REGION = case_when(GRP %in% c("ATL") ~ "SWATL",
                             GRP %in% c("CAMP") ~ "SGULF",
                             GRP %in% c("FLGS", "FLGN") ~ "EGULF",
                             GRP %in% c("MB", "MISS", "CS", "LA") ~ "CGULF",
@@ -2756,7 +2762,7 @@ n <- length(pops)+1
 ar <- read_delim("results/estuaries_rarefied.allelecount", delim = "\t") %>%
   gather(key = pop, value = AR, 2:n) %>%
   mutate(pop = ordered(pop, levels = pops),
-         REGION = case_when(pop %in% c("FLA") ~ "SWATL",
+         REGION = case_when(pop %in% c("ATL") ~ "SWATL",
                             pop %in% c("CAMP") ~ "SGULF",
                             pop %in% c("FLGS", "FLGN") ~ "EGULF",
                             pop %in% c("MB", "MISS", "CS", "LA") ~ "CGULF",
@@ -2860,6 +2866,19 @@ results <- results %>%
 
 write_delim(results, "results/allelrich_est.wilcox")
 
+tmp <- results %>%
+  select(-`p.value`) %>%
+  pivot_wider(names_from = "pop2", values_from = "stat")
+
+write_delim(tmp, "results/allelrich_est_matrix.wilcox")
+
+tmp <- results %>%
+  select(-stat) %>%
+  pivot_wider(names_from = "pop2", values_from = "p.value")
+
+write_delim(tmp, "results/allelrich_est_matrix.pval.wilcox")
+
+
 
 ggplot(results, aes(x = pop1, y = pop2, fill = stat)) +
   geom_tile(color = "black") +
@@ -2884,7 +2903,7 @@ even <- read_delim("results/gendiv.locstats", delim = "\t") %>%
   select(GRP, LOCUS, EVENNESS) %>%
   filter(GRP %in% pops) %>%
   mutate(GRP = ordered(GRP, levels = pops),
-         REGION = case_when(GRP %in% c("FLA") ~ "SWATL",
+         REGION = case_when(GRP %in% c("ATL") ~ "SWATL",
                             GRP %in% c("CAMP") ~ "SGULF",
                             GRP %in% c("FLGS", "FLGN") ~ "EGULF",
                             GRP %in% c("MB", "MISS", "CS", "LA") ~ "CGULF",
@@ -2997,7 +3016,20 @@ results <- results %>%
   mutate(pop1 = ordered(pop1, levels = pops),
          pop2 = ordered(pop2, levels = pops))
 
-write_delim(results, "results/evennes_est.wilcox", delim = "\t")
+write_delim(results, "results/evenness_est.wilcox", delim = "\t")
+
+tmp <- results %>%
+  select(-`p.value`) %>%
+  pivot_wider(names_from = "pop2", values_from = "stat")
+
+write_delim(tmp, "results/evenness_est_matrix.wilcox")
+
+tmp <- results %>%
+  select(-stat) %>%
+  pivot_wider(names_from = "pop2", values_from = "p.value")
+
+write_delim(tmp, "results/evenness_est_matrix.pval.wilcox")
+
 
 ggplot(results, aes(x = pop1, y = pop2, fill = stat)) +
   geom_tile(color = "black") +
@@ -3105,7 +3137,7 @@ het <- read_delim("results/gendiv.o.locstats", delim = "\t") %>%
   select(GRP, LOCUS, Hs) %>%
   filter(GRP %in% pops) %>%
   mutate(GRP = ordered(GRP, levels = pops),
-         REGION = case_when(GRP %in% c("FLA") ~ "SWATL",
+         REGION = case_when(GRP %in% c("ATL") ~ "SWATL",
                             GRP %in% c("CAMP") ~ "SGULF",
                             GRP %in% c("FLGS", "FLGN") ~ "EGULF",
                             GRP %in% c("MB", "MISS", "CS", "LA") ~ "CGULF",
@@ -3235,7 +3267,6 @@ results <- results %>%
 
 write_delim(results, "results/exphet_est.o.wilcox")
 
-
 tmp <- results %>%
   select(-`p.value`) %>%
   pivot_wider(names_from = "pop2", values_from = "stat")
@@ -3290,7 +3321,7 @@ n <- length(pops)+1
 ar <- read_delim("results/estuaries_rarefied.o.allelecount", delim = "\t") %>%
   gather(key = pop, value = AR, 2:n) %>%
   mutate(pop = ordered(pop, levels = pops),
-         REGION = case_when(pop %in% c("FLA") ~ "SWATL",
+         REGION = case_when(pop %in% c("ATL") ~ "SWATL",
                             pop %in% c("CAMP") ~ "SGULF",
                             pop %in% c("FLGS", "FLGN") ~ "EGULF",
                             pop %in% c("MB", "MISS", "CS", "LA") ~ "CGULF",
@@ -3394,6 +3425,18 @@ results <- results %>%
 
 write_delim(results, "results/allelrich_est.o.wilcox")
 
+tmp <- results %>%
+  select(-`p.value`) %>%
+  pivot_wider(names_from = "pop2", values_from = "stat")
+
+write_delim(tmp, "results/allelrich_est_matrix.o.wilcox")
+
+tmp <- results %>%
+  select(-stat) %>%
+  pivot_wider(names_from = "pop2", values_from = "p.value")
+
+write_delim(tmp, "results/allelrich_est_matrix.pval.o.wilcox")
+
 ggplot(results, aes(x = pop1, y = pop2, fill = stat)) +
   geom_tile(color = "black") +
   geom_text(aes(label = round(p.value, 2))) +
@@ -3417,7 +3460,7 @@ even <- read_delim("results/gendiv.o.locstats", delim = "\t") %>%
   select(GRP, LOCUS, EVENNESS) %>%
   filter(GRP %in% pops) %>%
   mutate(GRP = ordered(GRP, levels = pops),
-         REGION = case_when(GRP %in% c("FLA") ~ "SWATL",
+         REGION = case_when(GRP %in% c("ATL") ~ "SWATL",
                             GRP %in% c("CAMP") ~ "SGULF",
                             GRP %in% c("FLGS", "FLGN") ~ "EGULF",
                             GRP %in% c("MB", "MISS", "CS", "LA") ~ "CGULF",
@@ -3530,7 +3573,19 @@ results <- results %>%
   mutate(pop1 = ordered(pop1, levels = pops),
          pop2 = ordered(pop2, levels = pops))
 
-write_delim(results, "results/evennes_est.o.wilcox", delim = "\t")
+write_delim(results, "results/evenness_est.o.wilcox", delim = "\t")
+
+tmp <- results %>%
+  select(-`p.value`) %>%
+  pivot_wider(names_from = "pop2", values_from = "stat")
+
+write_delim(tmp, "results/evenness_est_matrix.o.wilcox")
+
+tmp <- results %>%
+  select(-stat) %>%
+  pivot_wider(names_from = "pop2", values_from = "p.value")
+
+write_delim(tmp, "results/evenness_est_matrix.pval.o.wilcox")
 
 ggplot(results, aes(x = pop1, y = pop2, fill = stat)) +
   geom_tile(color = "black") +
@@ -3639,7 +3694,7 @@ het <- read_delim("results/gendiv.n.locstats", delim = "\t") %>%
   select(GRP, LOCUS, Hs) %>%
   filter(GRP %in% pops) %>%
   mutate(GRP = ordered(GRP, levels = pops),
-         REGION = case_when(GRP %in% c("FLA") ~ "SWATL",
+         REGION = case_when(GRP %in% c("ATL") ~ "SWATL",
                             GRP %in% c("CAMP") ~ "SGULF",
                             GRP %in% c("FLGS", "FLGN") ~ "EGULF",
                             GRP %in% c("MB", "MISS", "CS", "LA") ~ "CGULF",
@@ -3768,6 +3823,18 @@ results <- results %>%
          pop2 = ordered(pop2, levels = pops))
 
 write_delim(results, "results/exphet_est.n.wilcox")
+
+tmp <- results %>%
+  select(-`p.value`) %>%
+  pivot_wider(names_from = "pop2", values_from = "stat")
+
+write_delim(tmp, "results/exphet_est_matrix.n.wilcox")
+
+tmp <- results %>%
+  select(-stat) %>%
+  pivot_wider(names_from = "pop2", values_from = "p.value")
+
+write_delim(tmp, "results/exphet_est_matrix.pval.n.wilcox")
   
 ggplot(results, aes(x = pop1, y = pop2, fill = stat)) +
   geom_tile(color = "black") +
@@ -3811,7 +3878,7 @@ n <- length(pops)+1
 ar <- read_delim("results/estuaries_rarefied.n.allelecount", delim = "\t") %>%
   gather(key = pop, value = AR, 2:n) %>%
   mutate(pop = ordered(pop, levels = pops),
-         REGION = case_when(pop %in% c("FLA") ~ "SWATL",
+         REGION = case_when(pop %in% c("ATL") ~ "SWATL",
                             pop %in% c("CAMP") ~ "SGULF",
                             pop %in% c("FLGS", "FLGN") ~ "EGULF",
                             pop %in% c("MB", "MISS", "CS", "LA") ~ "CGULF",
@@ -3915,6 +3982,18 @@ results <- results %>%
 
 write_delim(results, "results/allelrich_est.n.wilcox")
 
+tmp <- results %>%
+  select(-`p.value`) %>%
+  pivot_wider(names_from = "pop2", values_from = "stat")
+
+write_delim(tmp, "results/allelrich_est_matrix.n.wilcox")
+
+tmp <- results %>%
+  select(-stat) %>%
+  pivot_wider(names_from = "pop2", values_from = "p.value")
+
+write_delim(tmp, "results/allelrich_est_matrix.pval.n.wilcox")
+
 ggplot(results, aes(x = pop1, y = pop2, fill = stat)) +
   geom_tile(color = "black") +
   geom_text(aes(label = round(p.value, 2))) +
@@ -3938,7 +4017,7 @@ even <- read_delim("results/gendiv.n.locstats", delim = "\t") %>%
   select(GRP, LOCUS, EVENNESS) %>%
   filter(GRP %in% pops) %>%
   mutate(GRP = ordered(GRP, levels = pops),
-         REGION = case_when(GRP %in% c("FLA") ~ "SWATL",
+         REGION = case_when(GRP %in% c("ATL") ~ "SWATL",
                             GRP %in% c("CAMP") ~ "SGULF",
                             GRP %in% c("FLGS", "FLGN") ~ "EGULF",
                             GRP %in% c("MB", "MISS", "CS", "LA") ~ "CGULF",
@@ -4051,7 +4130,19 @@ results <- results %>%
   mutate(pop1 = ordered(pop1, levels = pops),
          pop2 = ordered(pop2, levels = pops))
 
-write_delim(results, "results/evennes_est.n.wilcox", delim = "\t")
+write_delim(results, "results/evenness_est.n.wilcox", delim = "\t")
+
+tmp <- results %>%
+  select(-`p.value`) %>%
+  pivot_wider(names_from = "pop2", values_from = "stat")
+
+write_delim(tmp, "results/evenness_est_matrix.n.wilcox")
+
+tmp <- results %>%
+  select(-stat) %>%
+  pivot_wider(names_from = "pop2", values_from = "p.value")
+
+write_delim(tmp, "results/evenness_est_matrix.pval.n.wilcox")
 
 ggplot(results, aes(x = pop1, y = pop2, fill = stat)) +
   geom_tile(color = "black") +
