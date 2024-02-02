@@ -1,0 +1,126 @@
+---
+title: "LDna analysis in Gafftop with one population"
+author: "atf"
+date: "2023-01-11"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+## Load libraries
+
+```{r}
+library('LDna')
+library('adegenet')
+```
+
+# Load data
+# Loading LD table modified from NeEstimator output
+```{r}
+dat <- read.table("data/POPGEN/All_burrow_1pop.txt", head=T, row.names=1)
+dat <- as.matrix(dat)
+ldna <- LDnaRaw(dat)
+```
+
+# Loading outliers
+```{r}
+#Fst outliers
+out_F <- read.table("data/POPGEN/outlier_loci.txt",head=F)
+#Environmental "outliers"
+out_E <- read.table("data/POPGEN/env_outlier.txt", head=F)
+```
+
+# Loading genpop
+```{r}
+gen <- read.genepop(file = "data/POPGEN/BMA_by_pop_genepop.gen", ncode=3L, quiet = FALSE)
+```
+
+# Adding strata to genpop
+```{r}
+strata <- read.table(file = "data/POPGEN/new_popmap_AEWS", header = F)
+colnames(strata) <- c("INDV","POP")
+INDV <- as.character(as.matrix(strata[,1]))
+INDV <- gsub("_","-",INDV)
+strata[,1] <- INDV
+strata(gen) <- strata[match(indNames(gen),strata$INDV),]
+```
+
+# Getting Clusters
+```{r}
+par(mfrow=c(1,2))
+clusters9_1 <- extractClusters(ldna, dat, min.edges = 9, plot.tree = TRUE, extract=T, branch.traversal = F, rm.COC=T, phi=1)
+```
+
+# Display loci in clusters
+```{r}
+clusters9_1$clusters
+```
+
+# Summarizing clusters
+```{r}
+summary9_1 <- summaryLDna(ldna, clusters9_1, dat)
+summary9_1
+```
+
+# Looking for outliers in the clusters
+```{r}
+for(i in 1:length(clusters9_1$clusters)){
+TMP <- length(which(clusters9_1$clusters[[i]] %in% out_F[,1]))
+TMP2 <- length(which(clusters9_1$clusters[[i]] %in% out_E[,1]))
+print(paste("Cluster", i, ": Fst out =", TMP, "; Env out =", TMP2))
+}
+```
+
+# Understanding the breakdown of the loci in the clusters with outliers
+```{r}
+for(i in c(1,3)){
+TMP <- which(clusters9_1$clusters[[i]] %in% out_F[,1])
+TMP2 <- which(clusters9_1$clusters[[i]] %in% out_E[,1])
+print(paste("Cluster", i, ": Total Loci =", length(clusters9_1$clusters[[i]]), "; Outlier loci =", length(unique(c(TMP,TMP2))), "; Shared loci = ", sum(TMP %in% TMP2)))
+}
+```
+
+# Making PCAs of each cluster
+```{r}
+for(i in 1:length(clusters9_1$clusters)){
+assign(paste("gen",i,sep="_"), gen[, loc=clusters9_1$clusters[[i]], drop=T])
+assign(paste("X",i,sep="_"), scaleGen(get(paste("gen",i,sep="_")), NA.method="mean", scale=F))
+assign(paste("pca",i,sep="_"), dudi.pca(get(paste("X",i,sep="_")),cent=FALSE,scale=FALSE,scannf=FALSE,nf=5000))
+}
+```
+
+# Plotting PCA
+```{r}
+c4 <- c("red4","mediumblue","darkgreen","chocolate")
+
+par(mfrow=c(2,2))
+for(i in 1:length(clusters9_1$clusters)){
+tmp_gen <- get(paste("gen",i,sep="_"))
+tmp_pca <- get(paste("pca",i,sep="_"))
+setPop(tmp_gen) <- ~POP
+ade4::s.class(tmp_pca$li, pop(tmp_gen), col=c4, cstar=0, axesell=F)
+mtext(paste(names(clusters9_1$clusters)[i], " (n=",length(locNames(tmp_gen))," loci)", sep=""), 3, 2, adj = 0.95)
+}
+```
+
+# Saving the plot
+```{r}
+png("PCA_m9_p1_all.png", res=300, width=3000, height=3000)
+par(mfrow=c(2,2))
+for(i in 1:length(clusters9_1$clusters)){
+tmp_gen <- get(paste("gen",i,sep="_"))
+tmp_pca <- get(paste("pca",i,sep="_"))
+setPop(tmp_gen) <- ~POP
+ade4::s.class(tmp_pca$li, pop(tmp_gen), col=c4, cstar=0, axesell=F)
+mtext(paste(names(clusters9_1$clusters)[i], " (n=",length(locNames(tmp_gen))," loci)", sep=""), 3, 2, adj = 0.95)
+}
+dev.off()
+```
